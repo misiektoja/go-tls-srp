@@ -461,18 +461,34 @@ func TestHandshakeFailures(t *testing.T) {
 		config func(*Config)
 		opts   func(*clientOptions)
 		want   alert
+		// wrongPassword is whether the server error wraps ErrWrongPassword.
+		wrongPassword bool
+		// cause is an error the server error must wrap, if any.
+		cause error
 	}{
 		{
 			// RFC 5054, Section 2.6: a wrong password shows as a bad MAC.
-			name: "wrong password",
-			opts: func(o *clientOptions) { o.password = "wrong" },
-			want: alertBadRecordMAC,
+			name:          "wrong password",
+			opts:          func(o *clientOptions) { o.password = "wrong" },
+			want:          alertBadRecordMAC,
+			wrongPassword: true,
 		},
 		{
 			// RFC 5054, Section 2.5.1.3: an unknown user looks the same.
-			name: "unknown user with simulated verifier",
-			opts: func(o *clientOptions) { o.username = "ghost" },
-			want: alertBadRecordMAC,
+			name:          "unknown user with simulated verifier",
+			opts:          func(o *clientOptions) { o.username = "ghost" },
+			want:          alertBadRecordMAC,
+			wrongPassword: true,
+		},
+		{
+			name: "refused by GetVerifier",
+			config: func(c *Config) {
+				c.GetVerifier = func(*ClientHelloInfo) (*Verifier, error) {
+					return nil, fmt.Errorf("too many failed sign-ins: %w", ErrAccessDenied)
+				}
+			},
+			want:  alertAccessDenied,
+			cause: ErrAccessDenied,
 		},
 		{
 			name: "unknown user refused",
@@ -558,6 +574,15 @@ func TestHandshakeFailures(t *testing.T) {
 			}
 			if got, ok := remoteAlert(res.clientErr); !ok || got != tt.want {
 				t.Errorf("client got %v, want alert %v", res.clientErr, tt.want)
+			}
+			if got := errors.Is(res.serverErr, ErrWrongPassword); got != tt.wrongPassword {
+				t.Errorf("server error %v: wraps ErrWrongPassword = %v, want %v", res.serverErr, got, tt.wrongPassword)
+			}
+			if tt.cause != nil && !errors.Is(res.serverErr, tt.cause) {
+				t.Errorf("server error %v does not wrap %v", res.serverErr, tt.cause)
+			}
+			if err := res.server.Handshake(); !errors.Is(err, ErrWrongPassword) && tt.wrongPassword {
+				t.Errorf("a later Handshake returned %v, want the same wrong password error", err)
 			}
 			if res.server.ConnectionState().HandshakeComplete {
 				t.Error("server reports a complete handshake")
