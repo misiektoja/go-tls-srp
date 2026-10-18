@@ -38,19 +38,22 @@ For an unknown username, return either a `SimulatedVerifier` or `ErrUnknownUsern
 * With `SimulatedVerifier`, the handshake fails exactly like a wrong password, with a `bad_record_mac` alert. The client cannot tell whether the username exists. Use the same seed on every server instance and keep it across restarts. Otherwise a client can spot an unknown username by its salt changing.
 * With `ErrUnknownUsername`, the server sends an `unknown_psk_identity` alert, which reveals that the username does not exist.
 
+To refuse a client before the costly SRP computation, for example one over a rate limit, return `ErrAccessDenied` or an error that wraps it. The client gets an `access_denied` alert.
+
 ### With net/http
 
 `net/http` only fills `Request.TLS` for `crypto/tls` connections, so it stays nil here. Store the connection with `http.Server.ConnContext` and read `ConnectionState` from it in the handler. The handshake runs on the first read of the connection, so `ReadHeaderTimeout` also limits how long it may take. See `Example_httpServer` in [example_test.go](example_test.go).
 
 ## Errors
 
-A wrong password, or an unknown user with a simulated verifier, fails the handshake with a `*net.OpError` whose text is `local error: tls: bad record MAC`. An alert from the client is a `*net.OpError` with `Op` set to `"remote error"`. A refused unknown username returns `ErrUnknownUsername`. Other handshake errors describe the cause in their text.
+A wrong password, or an unknown user with a simulated verifier, fails the handshake with an error that wraps `ErrWrongPassword`. The client gets a `bad_record_mac` alert. `Conn.Handshake` returns the same error again after a failed handshake. An alert from the client is a `*net.OpError` with `Op` set to `"remote error"`. A refused unknown username returns `ErrUnknownUsername` and a refusal from `GetVerifier` the error it returned. Other handshake errors describe the cause in their text.
 
 ## Security notes
 
 * SRP in TLS uses SHA-1 for the SRP values, as RFC 5054 requires, and CBC with HMAC-SHA1 for the records. The CBC code keeps the partial Lucky13 countermeasures of `crypto/tls`.
 * The server's big-number arithmetic uses [filippo.io/bigmod](https://pkg.go.dev/filippo.io/bigmod), the constant-time modular arithmetic of the Go standard library exported as a module.
-* After `GetVerifier` returns, a simulated verifier costs the server the same work as a real one. The time of the lookup itself is up to the caller. Counting attempts per username in `GetVerifier` lets a caller rate-limit password guessing.
+* After `GetVerifier` returns, a simulated verifier costs the server the same work as a real one. The time of the lookup itself is up to the caller.
+* To limit password guessing, count a failed sign-in when the handshake error wraps `ErrWrongPassword` and check the count in `GetVerifier`, returning `ErrAccessDenied` once it is used up.
 
 ## Tested clients
 
