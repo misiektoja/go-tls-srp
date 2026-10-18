@@ -47,8 +47,8 @@ RELEASE_CHECK_DIR ?= $(CURDIR)/.cache/release-check
 require-version:
 	@test -n "$(VERSION)" || { echo "Set VERSION, for example VERSION=v0.1.0" >&2; exit 1; }
 
-# A go.work above the check directory would replace the module's own requirements.
-release-check: export GOWORK = off
+# A go.work above the checkout or the check directory would replace the module's own requirements.
+release-check sbom: export GOWORK = off
 .PHONY: release-check
 release-check: ## Build, vet and test an export of HEAD and import it from a separate module. Set VERSION to check the changelog heading.
 	@if grep -q '^replace ' go.mod; then echo "error: go.mod has a replace directive"; exit 1; fi
