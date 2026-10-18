@@ -151,6 +151,12 @@ var ErrUnknownUsername = errors.New("srptls: unknown SRP username")
 // before it does the costly SRP computation.
 var ErrAccessDenied = errors.New("srptls: access denied")
 
+// ErrWrongPassword is wrapped by the handshake error when the client's Finished message does not
+// decrypt or does not verify. With SRP that means the client used another password than the
+// verifier was made from, or the username is unknown and a simulated verifier answered. An
+// attacker who alters the client's records on the way causes the same error.
+var ErrWrongPassword = errors.New("srptls: wrong SRP password")
+
 // A Config structure is used to configure a TLS-SRP server. After one has
 // been passed to a TLS function it must not be modified. A Config may be
 // reused.

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 )
 
 // serverHandshakeState contains details of a server handshake in progress.
@@ -63,6 +64,9 @@ func (hs *serverHandshakeState) handshake() error {
 		return err
 	}
 	if err := hs.readFinished(c.clientFinished[:]); err != nil {
+		if sentAlert(err, alertBadRecordMAC) || errors.Is(err, errClientFinished) {
+			return fmt.Errorf("%w: %w", ErrWrongPassword, err)
+		}
 		return err
 	}
 	c.buffering = true
@@ -304,6 +308,15 @@ func (hs *serverHandshakeState) establishKeys() error {
 	return nil
 }
 
+// sentAlert reports whether err is the alert a this server sent, not one it received.
+func sentAlert(err error, a alert) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "local error" && opErr.Err == a
+}
+
+// errClientFinished means the client's Finished message decrypted but did not verify.
+var errClientFinished = errors.New("tls: client's Finished message is incorrect")
+
 // readFinished reads the client's ChangeCipherSpec and Finished. A client
 // with the wrong password derives other keys, so its Finished record fails
 // with bad_record_mac before this check, as RFC 5054, Section 2.6 expects.
@@ -331,7 +344,7 @@ func (hs *serverHandshakeState) readFinished(out []byte) error {
 	if len(verify) != len(clientFinished.verifyData) ||
 		subtle.ConstantTimeCompare(verify, clientFinished.verifyData) != 1 {
 		c.sendAlert(alertHandshakeFailure)
-		return errors.New("tls: client's Finished message is incorrect")
+		return errClientFinished
 	}
 
 	data, err := clientFinished.marshal()
