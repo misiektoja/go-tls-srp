@@ -1,712 +1,636 @@
-// Copyright 2013 The Go Authors. All rights reserved.
+// Copyright 2026 The go-tls-srp Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package tls
+package srptls
 
 import (
-	"bufio"
 	"bytes"
-	"context"
-	"crypto/internal/boring"
-	"encoding/hex"
+	"crypto/rand"
 	"errors"
-	"flag"
 	"fmt"
-	"internal/testenv"
 	"io"
 	"net"
-	"os"
-	"os/exec"
-	"runtime"
-	"strconv"
-	"strings"
-	"sync"
 	"testing"
-	"testing/cryptotest"
 	"time"
+
+	"golang.org/x/crypto/cryptobyte"
 )
 
-// TLS reference tests run a connection against a reference implementation
-// (OpenSSL) of TLS and record the bytes of the resulting connection. The Go
-// code, during a test, is configured with deterministic randomness and so the
-// reference test can be reproduced exactly in the future.
-//
-// In order to save everyone who wishes to run the tests from needing the
-// reference implementation installed, the reference connections are saved in
-// files in the testdata directory. Thus running the tests involves nothing
-// external, but creating and updating them requires the reference
-// implementation.
-//
-// Tests can be updated by running them with the -update flag. This will cause
-// the test files for failing tests to be regenerated. Since the reference
-// implementation will always generate fresh random numbers, large parts of the
-// reference connection will always change.
-
-var (
-	update       = flag.Bool("update", false, "update golden files on failure")
-	keyFile      = flag.String("keylog", "", "destination file for KeyLogWriter")
-	bogoMode     = flag.Bool("bogo-mode", false, "Enabled bogo shim mode, ignore everything else")
-	bogoFilter   = flag.String("bogo-filter", "", "BoGo test filter")
-	bogoLocalDir = flag.String("bogo-local-dir", "",
-		"If not-present, checkout BoGo into this dir, or otherwise use it as a pre-existing checkout")
-	bogoReport = flag.String("bogo-html-report", "", "File path to render an HTML report with BoGo results")
+// testUser and testPassword are the credentials the test server knows.
+const (
+	testUser     = "device-1"
+	testPassword = "secret-1"
 )
 
-func runTestAndUpdateIfNeeded(t *testing.T, name string, run func(t *testing.T, update bool)) {
-	skipFIPS(t) // FIPS 140-3 mode changes the advertised parameters.
+// clientOptions describe the ClientHello and behavior of the test client.
+type clientOptions struct {
+	username        string
+	password        string
+	version         uint16
+	cipherSuites    []uint16
+	noSRPExtension  bool
+	noEMS           bool
+	renegotiation   []byte
+	scsv            bool
+	serverName      string
+	overridePublicA []byte
+}
 
-	// Go+BoringCrypto's boring.RandReader ignores the testing override set by
-	// cryptotest.SetGlobalRandom, so e.g. ECDH key generation would be
-	// non-deterministic. Setting cryptocustomrand=1 makes rand.CustomReader
-	// pass the caller's reader (the testing source) through instead.
-	if boring.Enabled {
-		testenv.SetGODEBUG(t, "cryptocustomrand=1")
-	}
-
-	success := t.Run(name, func(t *testing.T) {
-		cryptotest.SetGlobalRandom(t, 0)
-		run(t, false)
-	})
-
-	if !success && *update {
-		t.Run(name+"#update", func(t *testing.T) {
-			cryptotest.SetGlobalRandom(t, 0)
-			run(t, true)
-		})
+// defaultClientOptions mirrors a libest client: TLS 1.2, AES-256 first and
+// Extended Master Secret.
+func defaultClientOptions() clientOptions {
+	return clientOptions{
+		username:     testUser,
+		password:     testPassword,
+		version:      VersionTLS12,
+		cipherSuites: []uint16{TLS_SRP_SHA_WITH_AES_256_CBC_SHA, TLS_SRP_SHA_WITH_AES_128_CBC_SHA, TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA},
+		scsv:         true,
 	}
 }
 
-// checkOpenSSLVersion ensures that the version of OpenSSL looks reasonable
-// before updating the test data.
-func checkOpenSSLVersion() error {
-	if !*update {
-		return nil
-	}
+// testClient is a minimal TLS-SRP client built on the package's record layer.
+type testClient struct {
+	c            *Conn
+	opts         clientOptions
+	clientRandom []byte
+	serverHello  *serverHelloMsg
+	transcript   finishedHash
+	masterSecret []byte
+	finished     []byte
+}
 
-	openssl := exec.Command("openssl", "version")
-	output, err := openssl.CombinedOutput()
-	if err != nil {
+// handshake runs the client side of a full SRP handshake.
+func (tc *testClient) handshake() error {
+	c := tc.c
+	opts := tc.opts
+	tc.clientRandom = make([]byte, 32)
+	rand.Read(tc.clientRandom)
+
+	suites := append([]uint16(nil), opts.cipherSuites...)
+	if opts.scsv {
+		suites = append(suites, scsvRenegotiation)
+	}
+	hello := &clientHelloMsg{
+		vers:                         opts.version,
+		random:                       tc.clientRandom,
+		cipherSuites:                 suites,
+		compressionMethods:           []uint8{compressionNone},
+		serverName:                   opts.serverName,
+		extendedMasterSecret:         !opts.noEMS,
+		secureRenegotiationSupported: opts.renegotiation != nil,
+		secureRenegotiation:          opts.renegotiation,
+	}
+	if !opts.noSRPExtension {
+		hello.srpUsername = []byte(opts.username)
+	}
+	tc.transcript = newFinishedHash()
+	if _, err := c.writeHandshakeRecord(hello, &tc.transcript); err != nil {
 		return err
 	}
 
-	version := string(output)
-	if strings.HasPrefix(version, "OpenSSL 1.1.1") {
-		return nil
+	serverHello := new(serverHelloMsg)
+	if err := tc.readMessage(typeServerHello, serverHello); err != nil {
+		return err
+	}
+	tc.serverHello = serverHello
+	c.vers = serverHello.vers
+	c.haveVers = true
+
+	skx := new(serverKeyExchangeMsg)
+	if err := tc.readMessage(typeServerKeyExchange, skx); err != nil {
+		return err
+	}
+	if err := tc.readMessage(typeServerHelloDone, new(serverHelloDoneMsg)); err != nil {
+		return err
 	}
 
-	println("***********************************************")
-	println("")
-	println("You need to build OpenSSL 1.1.1 from source in order")
-	println("to update the test data.")
-	println("")
-	println("Configure it with:")
-	println("./Configure enable-weak-ssl-ciphers no-shared")
-	println("and then add the apps/ directory at the front of your PATH.")
-	println("***********************************************")
-
-	return errors.New("version of OpenSSL does not appear to be suitable for updating test data")
-}
-
-// recordingConn is a net.Conn that records the traffic that passes through it.
-// WriteTo can be used to produce output that can be later be loaded with
-// ParseTestData.
-type recordingConn struct {
-	net.Conn
-	sync.Mutex
-	flows   [][]byte
-	reading bool
-}
-
-func (r *recordingConn) Read(b []byte) (n int, err error) {
-	if n, err = r.Conn.Read(b); n == 0 {
-		return
+	n, g, salt, serverB, err := parseSRPParams(skx.key)
+	if err != nil {
+		return err
 	}
-	b = b[:n]
+	group, err := GroupByParameters(n, g)
+	if err != nil {
+		return err
+	}
+	a := make([]byte, 32)
+	rand.Read(a)
+	srp := srpClientPremaster(group, a, serverB, salt, []byte(opts.username), []byte(opts.password))
+	clientA := srp.public
+	if opts.overridePublicA != nil {
+		clientA = opts.overridePublicA
+	}
+	var body cryptobyte.Builder
+	body.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) { b.AddBytes(clientA) })
+	ckx := &clientKeyExchangeMsg{ciphertext: body.BytesOrPanic()}
+	if _, err := c.writeHandshakeRecord(ckx, &tc.transcript); err != nil {
+		return err
+	}
 
-	r.Lock()
-	defer r.Unlock()
-
-	if l := len(r.flows); l == 0 || !r.reading {
-		buf := make([]byte, len(b))
-		copy(buf, b)
-		r.flows = append(r.flows, buf)
+	if serverHello.extendedMasterSecret {
+		tc.masterSecret = extMasterFromPreMasterSecret(srp.premaster, tc.transcript.Sum())
 	} else {
-		r.flows[l-1] = append(r.flows[l-1], b[:n]...)
+		tc.masterSecret = masterFromPreMasterSecret(srp.premaster, tc.clientRandom, serverHello.random)
 	}
-	r.reading = true
-	return
-}
-
-func (r *recordingConn) Write(b []byte) (n int, err error) {
-	if n, err = r.Conn.Write(b); n == 0 {
-		return
+	suite := cipherSuiteByID(serverHello.cipherSuite)
+	if suite == nil {
+		return fmt.Errorf("server chose unknown suite %x", serverHello.cipherSuite)
 	}
-	b = b[:n]
+	clientMAC, serverMAC, clientKey, serverKey, clientIV, serverIV :=
+		keysFromMasterSecret(tc.masterSecret, tc.clientRandom, serverHello.random, suite.macLen, suite.keyLen, suite.ivLen)
+	c.out.prepareCipherSpec(suite.cipher(clientKey, clientIV, false), suite.mac(clientMAC))
+	c.in.prepareCipherSpec(suite.cipher(serverKey, serverIV, true), suite.mac(serverMAC))
 
-	r.Lock()
-	defer r.Unlock()
-
-	if l := len(r.flows); l == 0 || r.reading {
-		buf := make([]byte, len(b))
-		copy(buf, b)
-		r.flows = append(r.flows, buf)
-	} else {
-		r.flows[l-1] = append(r.flows[l-1], b[:n]...)
+	if err := c.writeChangeCipherRecord(); err != nil {
+		return err
 	}
-	r.reading = false
-	return
-}
-
-// WriteTo writes Go source code to w that contains the recorded traffic.
-func (r *recordingConn) WriteTo(w io.Writer) (int64, error) {
-	// TLS always starts with a client to server flow.
-	clientToServer := true
-	var written int64
-	for i, flow := range r.flows {
-		source, dest := "client", "server"
-		if !clientToServer {
-			source, dest = dest, source
-		}
-		n, err := fmt.Fprintf(w, ">>> Flow %d (%s to %s)\n", i+1, source, dest)
-		written += int64(n)
-		if err != nil {
-			return written, err
-		}
-		dumper := hex.Dumper(w)
-		n, err = dumper.Write(flow)
-		written += int64(n)
-		if err != nil {
-			return written, err
-		}
-		err = dumper.Close()
-		if err != nil {
-			return written, err
-		}
-		clientToServer = !clientToServer
-	}
-	return written, nil
-}
-
-func parseTestData(r io.Reader) (flows [][]byte, err error) {
-	var currentFlow []byte
-
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// If the line starts with ">>> " then it marks the beginning
-		// of a new flow.
-		if strings.HasPrefix(line, ">>> ") {
-			if len(currentFlow) > 0 || len(flows) > 0 {
-				flows = append(flows, currentFlow)
-				currentFlow = nil
-			}
-			continue
-		}
-
-		// Otherwise the line is a line of hex dump that looks like:
-		// 00000170  fc f5 06 bf (...)  |.....X{&?......!|
-		// (Some bytes have been omitted from the middle section.)
-		_, after, ok := strings.Cut(line, " ")
-		if !ok {
-			return nil, errors.New("invalid test data")
-		}
-		line = after
-
-		before, _, ok := strings.Cut(line, "|")
-		if !ok {
-			return nil, errors.New("invalid test data")
-		}
-		line = before
-
-		hexBytes := strings.Fields(line)
-		for _, hexByte := range hexBytes {
-			val, err := strconv.ParseUint(hexByte, 16, 8)
-			if err != nil {
-				return nil, errors.New("invalid hex byte in test data: " + err.Error())
-			}
-			currentFlow = append(currentFlow, byte(val))
-		}
+	tc.finished = tc.transcript.clientSum(tc.masterSecret)
+	if _, err := c.writeHandshakeRecord(&finishedMsg{verifyData: tc.finished}, &tc.transcript); err != nil {
+		return err
 	}
 
-	if len(currentFlow) > 0 {
-		flows = append(flows, currentFlow)
+	if err := c.readChangeCipherSpec(); err != nil {
+		return err
 	}
-
-	return flows, nil
-}
-
-// replayingConn is a net.Conn that replays flows recorded by recordingConn.
-type replayingConn struct {
-	t testing.TB
-	sync.Mutex
-	flows   [][]byte
-	reading bool
-}
-
-var _ net.Conn = (*replayingConn)(nil)
-
-func (r *replayingConn) Read(b []byte) (n int, err error) {
-	r.Lock()
-	defer r.Unlock()
-
-	if !r.reading {
-		r.t.Errorf("expected write, got read")
-		return 0, fmt.Errorf("recording expected write, got read")
+	want := tc.transcript.serverSum(tc.masterSecret)
+	serverFinished := new(finishedMsg)
+	if err := tc.readMessage(typeFinished, serverFinished); err != nil {
+		return err
 	}
-
-	n = copy(b, r.flows[0])
-	r.flows[0] = r.flows[0][n:]
-	if len(r.flows[0]) == 0 {
-		r.flows = r.flows[1:]
-		if len(r.flows) == 0 {
-			return n, io.EOF
-		} else {
-			r.reading = false
-		}
+	if !bytes.Equal(serverFinished.verifyData, want) {
+		return errors.New("server Finished is incorrect")
 	}
-	return n, nil
-}
-
-func (r *replayingConn) Write(b []byte) (n int, err error) {
-	r.Lock()
-	defer r.Unlock()
-
-	if r.reading {
-		r.t.Errorf("expected read, got write")
-		return 0, fmt.Errorf("recording expected read, got write")
-	}
-
-	if !bytes.HasPrefix(r.flows[0], b) {
-		r.t.Errorf("write mismatch: expected %x, got %x", r.flows[0], b)
-		return 0, fmt.Errorf("write mismatch")
-	}
-	r.flows[0] = r.flows[0][len(b):]
-	if len(r.flows[0]) == 0 {
-		r.flows = r.flows[1:]
-		r.reading = true
-	}
-	return len(b), nil
-}
-
-func (r *replayingConn) Close() error {
-	r.Lock()
-	defer r.Unlock()
-
-	if len(r.flows) > 0 {
-		r.t.Errorf("closed with unfinished flows")
-		return fmt.Errorf("unexpected close")
-	}
+	c.isHandshakeComplete.Store(true)
 	return nil
 }
 
-func (r *replayingConn) LocalAddr() net.Addr                { return nil }
-func (r *replayingConn) RemoteAddr() net.Addr               { return nil }
-func (r *replayingConn) SetDeadline(t time.Time) error      { return nil }
-func (r *replayingConn) SetReadDeadline(t time.Time) error  { return nil }
-func (r *replayingConn) SetWriteDeadline(t time.Time) error { return nil }
+// readMessage reads one handshake message of the given type into m and adds
+// it to the transcript.
+func (tc *testClient) readMessage(typ uint8, m handshakeMessage) error {
+	c := tc.c
+	if err := c.readHandshakeBytes(4); err != nil {
+		return err
+	}
+	data := c.hand.Bytes()
+	n := int(data[1])<<16 | int(data[2])<<8 | int(data[3])
+	if err := c.readHandshakeBytes(4 + n); err != nil {
+		return err
+	}
+	data = append([]byte(nil), c.hand.Next(4+n)...)
+	if data[0] != typ {
+		return fmt.Errorf("got handshake message %d, want %d", data[0], typ)
+	}
+	if !m.unmarshal(data) {
+		return fmt.Errorf("cannot parse handshake message %d", typ)
+	}
+	tc.transcript.Write(data)
+	return nil
+}
 
-// tempFile creates a temp file containing contents and returns its path.
-func tempFile(contents string) string {
-	file, err := os.CreateTemp("", "go-tls-test")
+// parseSRPParams decodes ServerSRPParams from RFC 5054, Section 2.8.2.
+func parseSRPParams(body []byte) (n, g, salt, b []byte, err error) {
+	s := cryptobyte.String(body)
+	if !readUint16LengthPrefixed(&s, &n) || !readUint16LengthPrefixed(&s, &g) ||
+		!readUint8LengthPrefixed(&s, &salt) || !readUint16LengthPrefixed(&s, &b) || !s.Empty() {
+		return nil, nil, nil, nil, errors.New("malformed ServerSRPParams")
+	}
+	return n, g, salt, b, nil
+}
+
+// testConfig returns a server Config that knows testUser in the given group.
+func testConfig(t testing.TB, bits int) *Config {
+	t.Helper()
+	group, err := GroupByBits(bits)
 	if err != nil {
-		panic("failed to create temp file: " + err.Error())
+		t.Fatal(err)
 	}
-	path := file.Name()
-	file.WriteString(contents)
-	file.Close()
-	return path
-}
-
-// localListener is set up by TestMain and used by localPipe to create Conn
-// pairs like net.Pipe, but connected by an actual buffered TCP connection.
-var localListener struct {
-	mu   sync.Mutex
-	addr net.Addr
-	ch   chan net.Conn
-}
-
-const localFlakes = 0 // change to 1 or 2 to exercise localServer/localPipe handling of mismatches
-
-func localServer(l net.Listener) {
-	for n := 0; ; n++ {
-		c, err := l.Accept()
-		if err != nil {
-			return
-		}
-		if localFlakes == 1 && n%2 == 0 {
-			c.Close()
-			continue
-		}
-		localListener.ch <- c
+	salt, err := NewSalt(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-var isConnRefused = func(err error) bool { return false }
-
-func localPipe(t testing.TB) (net.Conn, net.Conn) {
-	localListener.mu.Lock()
-	defer localListener.mu.Unlock()
-
-	addr := localListener.addr
-
-	var err error
-Dialing:
-	// We expect a rare mismatch, but probably not 5 in a row.
-	for i := 0; i < 5; i++ {
-		tooSlow := time.NewTimer(1 * time.Second)
-		defer tooSlow.Stop()
-		var c1 net.Conn
-		c1, err = net.Dial(addr.Network(), addr.String())
-		if err != nil {
-			if runtime.GOOS == "dragonfly" && (isConnRefused(err) || os.IsTimeout(err)) {
-				// golang.org/issue/29583: Dragonfly sometimes returns a spurious
-				// ECONNREFUSED or ETIMEDOUT.
-				<-tooSlow.C
-				continue
+	verifier, err := NewVerifier(group, []byte(testUser), []byte(testPassword), salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []byte("simulated verifier seed for tests")
+	return &Config{
+		GetVerifier: func(info *ClientHelloInfo) (*Verifier, error) {
+			if info.Username == testUser {
+				return verifier, nil
 			}
-			t.Fatalf("localPipe: %v", err)
-		}
-		if localFlakes == 2 && i == 0 {
-			c1.Close()
-			continue
-		}
-		for {
-			select {
-			case <-tooSlow.C:
-				t.Logf("localPipe: timeout waiting for %v", c1.LocalAddr())
-				c1.Close()
-				continue Dialing
-
-			case c2 := <-localListener.ch:
-				if c2.RemoteAddr().String() == c1.LocalAddr().String() {
-					t.Cleanup(func() { c1.Close() })
-					t.Cleanup(func() { c2.Close() })
-					return c1, c2
-				}
-				t.Logf("localPipe: unexpected connection: %v != %v", c2.RemoteAddr(), c1.LocalAddr())
-				c2.Close()
-			}
-		}
+			return SimulatedVerifier(seed, group, []byte(info.Username)), nil
+		},
 	}
-
-	t.Fatalf("localPipe: failed to connect: %v", err)
-	panic("unreachable")
 }
 
-func TestMain(m *testing.M) {
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args)
-		flag.PrintDefaults()
-		if *bogoMode {
-			os.Exit(89)
-		}
-	}
-
-	flag.Parse()
-
-	if *bogoMode {
-		bogoShim()
-		os.Exit(0)
-	}
-
-	os.Exit(runMain(m))
+// handshakeResult is the outcome of one test handshake on both sides.
+type handshakeResult struct {
+	client    *testClient
+	server    *Conn
+	clientErr error
+	serverErr error
 }
 
-func runMain(m *testing.M) int {
-	// Cipher suites preferences change based on the architecture. Force them to
-	// the version without AES acceleration for test consistency.
-	hasAESGCMHardwareSupport = false
-
-	// Set up localPipe.
+// tcpPair returns both ends of a loopback TCP connection. TCP rather than
+// net.Pipe, because a failing server writes its alert while the client is
+// still writing, which deadlocks an unbuffered pipe.
+func tcpPair(t testing.TB) (client, server net.Conn) {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		l, err = net.Listen("tcp6", "[::1]:0")
+		t.Fatal(err)
 	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open local listener: %v", err)
-		os.Exit(1)
-	}
-	localListener.ch = make(chan net.Conn)
-	localListener.addr = l.Addr()
 	defer l.Close()
-	go localServer(l)
-
-	if err := checkOpenSSLVersion(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v", err)
-		os.Exit(1)
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, _ := l.Accept()
+		accepted <- c
+	}()
+	client, err = net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	rootCAPath := tempFile(testRootCertPEM)
-	defer os.Remove(rootCAPath)
-	defaultClientCommand = []string{"openssl", "s_client", "-no_ticket",
-		"-verify", "1", "-verify_return_error", "-CAfile", rootCAPath,
-		"-servername", "test.golang.example", "-attime", fmt.Sprint(testTime().Unix())}
-
-	clientRootCAPath := tempFile(testClientRootCertPEM)
-	defer os.Remove(clientRootCAPath)
-	serverCommand = []string{"openssl", "s_server", "-no_ticket", "-num_tickets", "0",
-		"-naccept", "1", "-verify_return_error", "-verifyCAfile", clientRootCAPath,
-		"-attime", fmt.Sprint(testTime().Unix())}
-
-	if *keyFile != "" {
-		f, err := os.OpenFile(*keyFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			panic("failed to open -keylog file: " + err.Error())
-		}
-		testConfigClient.KeyLogWriter = f
-		testConfigServer.KeyLogWriter = f
-		testConfigFIPS140.KeyLogWriter = f
-		defer f.Close()
+	server = <-accepted
+	if server == nil {
+		t.Fatal("accept failed")
 	}
-
-	return m.Run()
+	deadline := time.Now().Add(30 * time.Second)
+	client.SetDeadline(deadline)
+	server.SetDeadline(deadline)
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+	})
+	return client, server
 }
 
-func testHandshake(t *testing.T, clientConfig, serverConfig *Config) (serverState, clientState ConnectionState, err error) {
-	const sentinel = "SENTINEL\n"
-	c, s := localPipe(t)
-	errChan := make(chan error, 1)
+// runHandshake connects the test client to a server over loopback TCP.
+func runHandshake(t *testing.T, config *Config, opts clientOptions) handshakeResult {
+	t.Helper()
+	clientConn, serverConn := tcpPair(t)
+
+	server := Server(serverConn, config)
+	serverDone := make(chan error, 1)
 	go func() {
-		cli := Client(c, clientConfig)
-		err := cli.Handshake()
+		err := server.Handshake()
+		serverDone <- err
 		if err != nil {
-			errChan <- fmt.Errorf("client: %v", err)
-			c.Close()
+			// Read until the client closes. Closing a socket with unread
+			// data sends a reset, which can discard the alert before the
+			// client reads it.
+			io.Copy(io.Discard, serverConn)
+		}
+	}()
+
+	client := &testClient{c: &Conn{conn: clientConn, config: &Config{}}, opts: opts}
+	clientErr := client.handshake()
+	if clientErr != nil {
+		clientConn.Close()
+	}
+	return handshakeResult{client: client, server: server, clientErr: clientErr, serverErr: <-serverDone}
+}
+
+// remoteAlert returns the alert in an error the client received from the
+// server, or false.
+func remoteAlert(err error) (alert, bool) {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "remote error" {
+		a, ok := opErr.Err.(alert)
+		return a, ok
+	}
+	return 0, false
+}
+
+// localAlert returns the alert the server sent, or false.
+func localAlert(err error) (alert, bool) {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "local error" {
+		a, ok := opErr.Err.(alert)
+		return a, ok
+	}
+	return 0, false
+}
+
+// TestHandshake checks a successful handshake, the connection state, the
+// exported keying material and data in both directions.
+func TestHandshake(t *testing.T) {
+	opts := defaultClientOptions()
+	opts.serverName = "est.example"
+	res := runHandshake(t, testConfig(t, 3072), opts)
+	if res.clientErr != nil || res.serverErr != nil {
+		t.Fatalf("client: %v, server: %v", res.clientErr, res.serverErr)
+	}
+
+	state := res.server.ConnectionState()
+	if !state.HandshakeComplete || state.Version != VersionTLS12 || state.CipherSuite != TLS_SRP_SHA_WITH_AES_256_CBC_SHA {
+		t.Errorf("state = %+v", state)
+	}
+	if state.SRPUsername != testUser || state.ServerName != "est.example" || !state.ExtendedMasterSecret {
+		t.Errorf("username %q, server name %q, EMS %v", state.SRPUsername, state.ServerName, state.ExtendedMasterSecret)
+	}
+	if !bytes.Equal(state.TLSUnique, res.client.finished) {
+		t.Errorf("tls-unique %X, client Finished %X", state.TLSUnique, res.client.finished)
+	}
+	sh := res.client.serverHello
+	if !sh.secureRenegotiationSupported || len(sh.secureRenegotiation) != 0 || !sh.extendedMasterSecret || !sh.serverNameAck {
+		t.Errorf("ServerHello extensions = %+v", sh)
+	}
+
+	ekm, err := state.ExportKeyingMaterial("EXPORTER-test", []byte("ctx"), 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := ekmFromMasterSecret(res.client.masterSecret, res.client.clientRandom, sh.random)("EXPORTER-test", []byte("ctx"), 32)
+	if !bytes.Equal(ekm, want) {
+		t.Error("exported keying material differs between client and server")
+	}
+
+	exchangeData(t, res)
+}
+
+// exchangeData sends application data in both directions, including a
+// record larger than the first small records.
+func exchangeData(t *testing.T, res handshakeResult) {
+	t.Helper()
+	request := bytes.Repeat([]byte("GET /.well-known/est/cacerts "), 1000)
+	response := []byte("HTTP/1.1 200 OK")
+
+	errc := make(chan error, 1)
+	go func() {
+		got := make([]byte, len(request))
+		if _, err := io.ReadFull(res.server, got); err != nil {
+			errc <- err
 			return
 		}
-		clientState = cli.ConnectionState()
-		buf, err := io.ReadAll(cli)
-		if err != nil {
-			if serverConfig.ClientAuth != NoClientCert && clientState.Version == VersionTLS13 {
-				// In TLS 1.3, client certificates are sent after the server's
-				// handshake has completed, and the client only learns about it
-				// reading the alert after the handshake.
-				errChan <- fmt.Errorf("client (from Read): %v", err)
-				c.Close()
-				return
-			} else {
-				t.Errorf("failed to call cli.Read: %v", err)
-			}
+		if !bytes.Equal(got, request) {
+			errc <- errors.New("server read different data")
+			return
 		}
-		defer func() { errChan <- nil }()
-		if got := string(buf); got != sentinel {
-			t.Errorf("read %q from TLS connection, but expected %q", got, sentinel)
-		}
-		// We discard the error because after ReadAll returns the server must
-		// have already closed the connection. Sending data (the closeNotify
-		// alert) can cause a reset, that will make Close return an error.
-		cli.Close()
+		_, err := res.server.Write(response)
+		errc <- err
 	}()
-	server := Server(s, serverConfig)
-	err = server.Handshake()
-	if err == nil {
-		serverState = server.ConnectionState()
-		if _, err := io.WriteString(server, sentinel); err != nil {
-			t.Errorf("failed to call server.Write: %v", err)
-		}
-		if err := server.Close(); err != nil {
-			t.Errorf("failed to call server.Close: %v", err)
-		}
-	} else {
-		err = fmt.Errorf("server: %v", err)
-		s.Close()
+	if _, err := res.client.c.Write(request); err != nil {
+		t.Fatal(err)
 	}
-	err = errors.Join(err, <-errChan)
-	return
-}
-
-func fromHex(s string) []byte {
-	b, _ := hex.DecodeString(s)
-	return b
-}
-
-func TestServerHelloTrailingMessage(t *testing.T) {
-	// In TLS 1.3 the change cipher spec message is optional. If a CCS message
-	// is not sent, after reading the ServerHello, the read traffic secret is
-	// set, and all following messages must be encrypted. If the server sends
-	// additional unencrypted messages in a record with the ServerHello, the
-	// client must either fail or ignore the additional messages.
-
-	c, s := localPipe(t)
-	go func() {
-		ctx := context.Background()
-		srv := Server(s, testConfigServer.Clone())
-		clientHello, _, err := srv.readClientHello(ctx)
-		if err != nil {
-			testFatal(t, err)
-		}
-
-		hs := serverHandshakeStateTLS13{
-			c:           srv,
-			ctx:         ctx,
-			clientHello: clientHello,
-		}
-		if err := hs.processClientHello(); err != nil {
-			testFatal(t, err)
-		}
-		if err := transcriptMsg(hs.clientHello, hs.transcript); err != nil {
-			testFatal(t, err)
-		}
-
-		record, err := concatHandshakeMessages(hs.hello, &encryptedExtensionsMsg{alpnProtocol: "h2"})
-		if err != nil {
-			testFatal(t, err)
-		}
-
-		if _, err := s.Write(record); err != nil {
-			testFatal(t, err)
-		}
-		srv.Close()
-	}()
-
-	cli := Client(c, testConfigClient.Clone())
-	expectedErr := "tls: handshake buffer not empty before setting read traffic secret"
-	if err := cli.Handshake(); err == nil {
-		t.Fatal("expected error from incomplete handshake, got nil")
-	} else if err.Error() != expectedErr {
-		t.Fatalf("expected error %q, got %q", expectedErr, err.Error())
+	got := make([]byte, len(response))
+	if _, err := io.ReadFull(res.client.c, got); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, response) {
+		t.Errorf("client read %q", got)
 	}
 }
 
-func TestClientHelloTrailingMessage(t *testing.T) {
-	// Same as TestServerHelloTrailingMessage but for the client side.
-
-	c, s := localPipe(t)
-	go func() {
-		cli := Client(c, testConfigClient.Clone())
-
-		hello, _, _, err := cli.makeClientHello()
-		if err != nil {
-			testFatal(t, err)
-		}
-
-		record, err := concatHandshakeMessages(hello, &certificateMsgTLS13{})
-		if err != nil {
-			testFatal(t, err)
-		}
-
-		if _, err := c.Write(record); err != nil {
-			testFatal(t, err)
-		}
-		cli.Close()
-	}()
-
-	srv := Server(s, testConfigServer.Clone())
-	expectedErr := "tls: handshake buffer not empty before setting read traffic secret"
-	if err := srv.Handshake(); err == nil {
-		t.Fatal("expected error from incomplete handshake, got nil")
-	} else if err.Error() != expectedErr {
-		t.Fatalf("expected error %q, got %q", expectedErr, err.Error())
+// TestHandshakeCipherSuites checks the default preference order and that
+// 3DES is used only when configured.
+func TestHandshakeCipherSuites(t *testing.T) {
+	tests := []struct {
+		name   string
+		server []uint16
+		client []uint16
+		want   uint16
+	}{
+		{"client prefers AES-128", nil, []uint16{TLS_SRP_SHA_WITH_AES_128_CBC_SHA, TLS_SRP_SHA_WITH_AES_256_CBC_SHA}, TLS_SRP_SHA_WITH_AES_256_CBC_SHA},
+		{"AES-128 only", nil, []uint16{TLS_SRP_SHA_WITH_AES_128_CBC_SHA}, TLS_SRP_SHA_WITH_AES_128_CBC_SHA},
+		{"3DES configured", []uint16{TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA}, []uint16{TLS_SRP_SHA_WITH_AES_256_CBC_SHA, TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA}, TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA},
 	}
-}
-
-func TestDoubleClientHelloHRR(t *testing.T) {
-	// If a client sends two ClientHello messages in a single record, and the
-	// server sends a HRR after reading the first ClientHello, the server must
-	// either fail or ignore the trailing ClientHello.
-
-	c, s := localPipe(t)
-
-	go func() {
-		cli := Client(c, testConfigClient.Clone())
-
-		hello, _, _, err := cli.makeClientHello()
-		if err != nil {
-			testFatal(t, err)
-		}
-		hello.keyShares = nil
-
-		record, err := concatHandshakeMessages(hello, hello)
-		if err != nil {
-			testFatal(t, err)
-		}
-
-		if _, err := c.Write(record); err != nil {
-			testFatal(t, err)
-		}
-		cli.Close()
-	}()
-
-	srv := Server(s, testConfigServer.Clone())
-	expectedErr := "tls: handshake buffer not empty before HelloRetryRequest"
-	if err := srv.Handshake(); err == nil {
-		t.Fatal("expected error from incomplete handshake, got nil")
-	} else if err.Error() != expectedErr {
-		t.Fatalf("expected error %q, got %q", expectedErr, err.Error())
-	}
-}
-
-// concatHandshakeMessages marshals and concatenates the given handshake
-// messages into a single record.
-func concatHandshakeMessages(msgs ...handshakeMessage) ([]byte, error) {
-	var marshalled []byte
-	for _, msg := range msgs {
-		data, err := msg.marshal()
-		if err != nil {
-			return nil, err
-		}
-		marshalled = append(marshalled, data...)
-	}
-	m := len(marshalled)
-	outBuf := make([]byte, recordHeaderLen)
-	outBuf[0] = byte(recordTypeHandshake)
-	vers := VersionTLS12
-	outBuf[1] = byte(vers >> 8)
-	outBuf[2] = byte(vers)
-	outBuf[3] = byte(m >> 8)
-	outBuf[4] = byte(m)
-	outBuf = append(outBuf, marshalled...)
-	return outBuf, nil
-}
-
-func TestMultipleKeyUpdate(t *testing.T) {
-	for _, requestUpdate := range []bool{true, false} {
-		t.Run(fmt.Sprintf("requestUpdate=%t", requestUpdate), func(t *testing.T) {
-
-			c, s := localPipe(t)
-			clientConfig := testConfigClient.Clone()
-			clientConfig.MinVersion = VersionTLS13
-			clientConfig.MaxVersion = VersionTLS13
-			serverConfig := testConfigServer.Clone()
-			serverConfig.MinVersion = VersionTLS13
-			serverConfig.MaxVersion = VersionTLS13
-			client := Client(c, clientConfig)
-			server := Server(s, serverConfig)
-
-			clientHandshakeDone := make(chan struct{})
-			go func() {
-				if err := client.Handshake(); err != nil {
-				}
-				close(clientHandshakeDone)
-				io.Copy(io.Discard, server)
-			}()
-
-			if err := server.Handshake(); err != nil {
-				t.Fatalf("server handshake failed: %v\n", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := testConfig(t, 1024)
+			config.CipherSuites = tt.server
+			opts := defaultClientOptions()
+			opts.cipherSuites = tt.client
+			res := runHandshake(t, config, opts)
+			if res.clientErr != nil || res.serverErr != nil {
+				t.Fatalf("client: %v, server: %v", res.clientErr, res.serverErr)
 			}
-			<-clientHandshakeDone
-
-			c.SetReadDeadline(time.Now().Add(1 * time.Second))
-			s.SetReadDeadline(time.Now().Add(1 * time.Second))
-
-			kuMsg, err := (&keyUpdateMsg{updateRequested: requestUpdate}).marshal()
-			if err != nil {
-				t.Fatalf("failed to marshal key update message: %v", err)
+			if got := res.server.ConnectionState().CipherSuite; got != tt.want {
+				t.Errorf("suite = %s, want %s", CipherSuiteName(got), CipherSuiteName(tt.want))
 			}
+			exchangeData(t, res)
+		})
+	}
+}
 
-			client.out.Lock()
-			if _, err := client.writeRecordLocked(recordTypeHandshake, append(kuMsg, kuMsg...)); err != nil {
-				t.Fatalf("failed to write key update messages: %v", err)
-			}
-			client.out.Unlock()
+// TestHandshakeWithoutEMS checks a client without Extended Master Secret and
+// that exporting keying material is then refused.
+func TestHandshakeWithoutEMS(t *testing.T) {
+	opts := defaultClientOptions()
+	opts.noEMS = true
+	opts.scsv = false
+	opts.renegotiation = []byte{}
+	res := runHandshake(t, testConfig(t, 2048), opts)
+	if res.clientErr != nil || res.serverErr != nil {
+		t.Fatalf("client: %v, server: %v", res.clientErr, res.serverErr)
+	}
+	state := res.server.ConnectionState()
+	if state.ExtendedMasterSecret || res.client.serverHello.extendedMasterSecret {
+		t.Error("EMS negotiated without the client asking")
+	}
+	if _, err := state.ExportKeyingMaterial("EXPORTER-test", nil, 32); err == nil {
+		t.Error("ExportKeyingMaterial succeeded without EMS")
+	}
+	exchangeData(t, res)
+}
 
-			_, err = io.Copy(io.Discard, client)
-			if err == nil {
-				t.Fatal("expected multiple key update messages to cause an error, got nil")
-			} else if !strings.HasSuffix(err.Error(), "tls: unexpected message") {
-				t.Fatalf("unexpected error: %v", err)
+// TestHandshakeGroups runs a handshake in every RFC 5054 group. Groups above
+// 3072 bits are skipped with -short.
+func TestHandshakeGroups(t *testing.T) {
+	for _, group := range groups {
+		if testing.Short() && group.Bits() > 3072 {
+			continue
+		}
+		t.Run(fmt.Sprint(group.Bits()), func(t *testing.T) {
+			res := runHandshake(t, testConfig(t, group.Bits()), defaultClientOptions())
+			if res.clientErr != nil || res.serverErr != nil {
+				t.Fatalf("client: %v, server: %v", res.clientErr, res.serverErr)
 			}
 		})
+	}
+}
+
+// TestHandshakeFailures checks the alert the server sends for each kind of
+// refused client.
+func TestHandshakeFailures(t *testing.T) {
+	group, _ := GroupByBits(1024)
+	tests := []struct {
+		name   string
+		config func(*Config)
+		opts   func(*clientOptions)
+		want   alert
+	}{
+		{
+			// RFC 5054, Section 2.6: a wrong password shows as a bad MAC.
+			name: "wrong password",
+			opts: func(o *clientOptions) { o.password = "wrong" },
+			want: alertBadRecordMAC,
+		},
+		{
+			// RFC 5054, Section 2.5.1.3: an unknown user looks the same.
+			name: "unknown user with simulated verifier",
+			opts: func(o *clientOptions) { o.username = "ghost" },
+			want: alertBadRecordMAC,
+		},
+		{
+			name: "unknown user refused",
+			config: func(c *Config) {
+				next := c.GetVerifier
+				c.GetVerifier = func(info *ClientHelloInfo) (*Verifier, error) {
+					if info.Username != testUser {
+						return nil, ErrUnknownUsername
+					}
+					return next(info)
+				}
+			},
+			opts: func(o *clientOptions) { o.username = "ghost" },
+			want: alertUnknownPSKIdentity,
+		},
+		{
+			name: "lookup error",
+			config: func(c *Config) {
+				c.GetVerifier = func(*ClientHelloInfo) (*Verifier, error) { return nil, errors.New("database down") }
+			},
+			want: alertInternalError,
+		},
+		{
+			name: "invalid stored verifier",
+			config: func(c *Config) {
+				c.GetVerifier = func(*ClientHelloInfo) (*Verifier, error) {
+					return &Verifier{Group: group, Salt: []byte{1}, Value: group.N()}, nil
+				}
+			},
+			want: alertInternalError,
+		},
+		{
+			// RFC 5054, Section 2.5.1.2.
+			name: "no SRP extension",
+			opts: func(o *clientOptions) { o.noSRPExtension = true },
+			want: alertUnknownPSKIdentity,
+		},
+		{
+			name: "TLS 1.1 client",
+			opts: func(o *clientOptions) { o.version = VersionTLS11 },
+			want: alertProtocolVersion,
+		},
+		{
+			name: "no SRP cipher suite",
+			opts: func(o *clientOptions) { o.cipherSuites = []uint16{0xc02f, 0x009c} },
+			want: alertHandshakeFailure,
+		},
+		{
+			name: "3DES not configured",
+			opts: func(o *clientOptions) { o.cipherSuites = []uint16{TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA} },
+			want: alertHandshakeFailure,
+		},
+		{
+			name: "renegotiation data in the initial handshake",
+			opts: func(o *clientOptions) { o.renegotiation = []byte{1, 2, 3} },
+			want: alertHandshakeFailure,
+		},
+		{
+			// RFC 5054, Section 2.5.4.
+			name: "A is zero",
+			opts: func(o *clientOptions) { o.overridePublicA = []byte{0} },
+			want: alertIllegalParameter,
+		},
+		{
+			name: "A is N",
+			opts: func(o *clientOptions) { o.overridePublicA = group.N() },
+			want: alertIllegalParameter,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := testConfig(t, 1024)
+			if tt.config != nil {
+				tt.config(config)
+			}
+			opts := defaultClientOptions()
+			if tt.opts != nil {
+				tt.opts(&opts)
+			}
+			res := runHandshake(t, config, opts)
+			if res.serverErr == nil {
+				t.Fatal("server handshake succeeded")
+			}
+			if got, ok := remoteAlert(res.clientErr); !ok || got != tt.want {
+				t.Errorf("client got %v, want alert %v", res.clientErr, tt.want)
+			}
+			if res.server.ConnectionState().HandshakeComplete {
+				t.Error("server reports a complete handshake")
+			}
+		})
+	}
+}
+
+// TestRenegotiationRefused checks that a ClientHello after the handshake
+// ends the connection.
+func TestRenegotiationRefused(t *testing.T) {
+	res := runHandshake(t, testConfig(t, 1024), defaultClientOptions())
+	if res.clientErr != nil || res.serverErr != nil {
+		t.Fatalf("client: %v, server: %v", res.clientErr, res.serverErr)
+	}
+	errc := make(chan error, 1)
+	go func() {
+		_, err := res.server.Read(make([]byte, 1))
+		errc <- err
+	}()
+	hello := &clientHelloMsg{
+		vers:               VersionTLS12,
+		random:             make([]byte, 32),
+		cipherSuites:       []uint16{TLS_SRP_SHA_WITH_AES_256_CBC_SHA},
+		compressionMethods: []uint8{compressionNone},
+		srpUsername:        []byte(testUser),
+	}
+	if _, err := res.client.c.writeHandshakeRecord(hello, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errc; err == nil {
+		t.Fatal("server accepted a renegotiation")
+	}
+	if _, err := res.client.c.Read(make([]byte, 1)); err == nil {
+		t.Fatal("client read data after renegotiation")
+	} else if got, ok := remoteAlert(err); !ok || got != alertUnexpectedMessage {
+		t.Errorf("client got %v, want unexpected_message", err)
+	}
+}
+
+// TestNotTLS checks that plain HTTP on the TLS port fails before the server
+// reads a full record.
+func TestNotTLS(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	server := Server(serverConn, testConfig(t, 1024))
+	go clientConn.Write([]byte("GET / HTTP/1.1\r\nHost: est\r\n\r\n"))
+	err := server.Handshake()
+	var headerErr RecordHeaderError
+	if !errors.As(err, &headerErr) || headerErr.Conn == nil {
+		t.Fatalf("err = %v, want RecordHeaderError with the connection", err)
+	}
+}
+
+// TestMissingGetVerifier checks that a Config without GetVerifier fails.
+func TestMissingGetVerifier(t *testing.T) {
+	if _, err := Listen("tcp", "127.0.0.1:0", &Config{}); err == nil {
+		t.Error("Listen accepted a Config without GetVerifier")
+	}
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	go io.Copy(io.Discard, clientConn)
+	if err := Server(serverConn, &Config{}).Handshake(); err == nil {
+		t.Error("handshake succeeded without GetVerifier")
+	}
+}
+
+// TestLocalAlertOnServer checks that the server reports the alert it sent.
+func TestLocalAlertOnServer(t *testing.T) {
+	opts := defaultClientOptions()
+	opts.password = "wrong"
+	res := runHandshake(t, testConfig(t, 1024), opts)
+	if got, ok := localAlert(res.serverErr); !ok || got != alertBadRecordMAC {
+		t.Errorf("server error = %v, want local bad_record_mac", res.serverErr)
 	}
 }
