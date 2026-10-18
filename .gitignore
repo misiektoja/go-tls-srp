@@ -1,0 +1,4 @@
+# Release artifacts, pinned tools and the release check export
+dist/
+bin/
+.cache/
