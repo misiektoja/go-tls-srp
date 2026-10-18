@@ -193,6 +193,10 @@ func (hs *serverHandshakeState) getVerifier() error {
 		c.sendAlert(alertUnknownPSKIdentity)
 		return err
 	}
+	if errors.Is(err, ErrAccessDenied) {
+		c.sendAlert(alertAccessDenied)
+		return err
+	}
 	if err != nil {
 		c.sendAlert(alertInternalError)
 		return err

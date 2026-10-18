@@ -24,6 +24,7 @@ const (
 	alertRecordOverflow       alert = 22
 	alertHandshakeFailure     alert = 40
 	alertIllegalParameter     alert = 47
+	alertAccessDenied         alert = 49
 	alertDecodeError          alert = 50
 	alertDecryptError         alert = 51
 	alertProtocolVersion      alert = 70
@@ -42,6 +43,7 @@ var alertText = map[alert]string{
 	alertRecordOverflow:       "record overflow",
 	alertHandshakeFailure:     "handshake failure",
 	alertIllegalParameter:     "illegal parameter",
+	alertAccessDenied:         "access denied",
 	alertDecodeError:          "error decoding message",
 	alertDecryptError:         "error decrypting message",
 	alertProtocolVersion:      "protocol version not supported",

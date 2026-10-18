@@ -146,13 +146,18 @@ func (c *ClientHelloInfo) Context() context.Context {
 // instead to hide which usernames exist.
 var ErrUnknownUsername = errors.New("srptls: unknown SRP username")
 
+// ErrAccessDenied may be returned by Config.GetVerifier, also wrapped, to refuse a client, for
+// example one over a rate limit. The server then aborts the handshake with an access_denied alert
+// before it does the costly SRP computation.
+var ErrAccessDenied = errors.New("srptls: access denied")
+
 // A Config structure is used to configure a TLS-SRP server. After one has
 // been passed to a TLS function it must not be modified. A Config may be
 // reused.
 type Config struct {
 	// GetVerifier returns the SRP verifier for the username in the
 	// ClientHello. It is required. Any error other than ErrUnknownUsername
-	// aborts the handshake with an internal_error alert.
+	// and ErrAccessDenied aborts the handshake with an internal_error alert.
 	GetVerifier func(*ClientHelloInfo) (*Verifier, error)
 
 	// CipherSuites is the server's preference order of SRP cipher suites.
