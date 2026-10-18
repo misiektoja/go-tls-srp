@@ -72,6 +72,23 @@ To pick up fixes from a newer Go release, compare its `crypto/tls` with Go 1.27.
 git diff --no-index "$(go1.27.2 env GOROOT)/src/crypto/tls/conn.go" "$(go env GOROOT)/src/crypto/tls/conn.go"
 ```
 
+## Releases
+
+[CHANGELOG.md](CHANGELOG.md) has one section per version. Before tagging, run the release check on `main`:
+
+```bash
+VERSION=v0.1.0 make release-check
+```
+
+It tests an export of `HEAD` and imports it from a separate module, so it catches files that are untracked or only present locally. A release starts when a version tag reachable from `main` is pushed:
+
+```bash
+git tag -s v0.1.0 -m 'v0.1.0'
+git push origin main v0.1.0
+```
+
+The release workflow repeats the check on the tag, builds source archives, an SBOM and checksums, attests their provenance and creates a draft release with the changelog section as its description. Review the draft and publish it. Do not draft a release in the GitHub UI. That creates the tag and the workflow refuses to rebuild a published release.
+
 ## Licence
 
 BSD-3-Clause, the licence of the Go project. See [LICENSE](LICENSE).
