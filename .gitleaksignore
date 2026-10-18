@@ -1,0 +1,3 @@
+# Go's published example key in crypto/tls/example_test.go, imported from Go 1.27.2 and removed by later commits.
+b52d68cd28c7c87d7eaa60eadd227c109eadc918:example_test.go:private-key:124
+b52d68cd28c7c87d7eaa60eadd227c109eadc918:example_test.go:private-key:153
