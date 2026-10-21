@@ -3,8 +3,12 @@
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
-# GO_VERSION is the go directive in go.mod. The release check's consumer module declares it.
+# GO_VERSION is the go directive in go.mod. The release check's consumer module declares it. Every
+# recipe runs with exactly that toolchain, which is the one CI installs through go-version-file, so a
+# newer local Go cannot change what the checks see. golangci-lint analyses the standard library of the
+# toolchain in use, and a toolchain newer than the linter understands makes it crash.
 GO_VERSION := $(shell awk '$$1 == "go" && $$2 ~ /^[0-9]/ { print $$2; exit }' go.mod)
+export GOTOOLCHAIN := go$(GO_VERSION)
 
 .PHONY: all
 all: test
