@@ -1,5 +1,13 @@
 # go-tls-srp
 
+[![GitHub Release](https://img.shields.io/github/v/release/misiektoja/go-tls-srp?style=flat-square&color=blue)](https://github.com/misiektoja/go-tls-srp/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/misiektoja/go-tls-srp.svg)](https://pkg.go.dev/github.com/misiektoja/go-tls-srp)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue?style=flat-square)](LICENSE)
+[![Tests](https://github.com/misiektoja/go-tls-srp/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/misiektoja/go-tls-srp/actions/workflows/test.yml)
+[![Interoperability](https://github.com/misiektoja/go-tls-srp/actions/workflows/interop.yml/badge.svg?branch=main)](https://github.com/misiektoja/go-tls-srp/actions/workflows/interop.yml)
+[![Supply chain](https://github.com/misiektoja/go-tls-srp/actions/workflows/supply-chain.yml/badge.svg?branch=main)](https://github.com/misiektoja/go-tls-srp/actions/workflows/supply-chain.yml)
+[![OpenSSF Scorecard](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.scorecard.dev%2Fprojects%2Fgithub.com%2Fmisiektoja%2Fgo-tls-srp&query=%24.score&label=openssf%20scorecard&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/misiektoja/go-tls-srp)
+
 Package `srptls` is a TLS 1.2 client and server that sign in with SRP, the Secure Remote Password key exchange of [RFC 5054](https://www.rfc-editor.org/rfc/rfc5054). A client proves that it knows a password. The server stores only a verifier derived from that password and needs no certificate. It proves to the client that it holds that verifier.
 
 Go's `crypto/tls` has no SRP. This module is a trimmed copy of `crypto/tls` from Go 1.27.2, cut down to the SRP handshake. The server is for devices that already authenticate with TLS-SRP, for example EST clients built on libest or OpenSSL. The client signs in to such servers, for example EST servers that accept TLS-SRP.
