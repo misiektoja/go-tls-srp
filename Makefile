@@ -50,12 +50,12 @@ require-version:
 # A go.work above the checkout or the check directory would replace the module's own requirements.
 release-check sbom: export GOWORK = off
 .PHONY: release-check
-release-check: ## Build, vet and test an export of HEAD and import it from a separate module. Set VERSION to check the changelog heading.
+release-check: ## Build, vet and test an export of HEAD and import it from a separate module. Set VERSION to check the release notes heading.
 	@if grep -q '^replace ' go.mod; then echo "error: go.mod has a replace directive"; exit 1; fi
 	@if [ -n "$(VERSION)" ]; then \
 		version="$(VERSION)"; version="$${version#v}"; \
-		grep -q "^## \[$$version\] - " CHANGELOG.md || { echo "error: CHANGELOG.md has no heading for $$version"; exit 1; }; \
-		if grep -qi '^## \[Unreleased' CHANGELOG.md; then echo "error: CHANGELOG.md still has an Unreleased section"; exit 1; fi; \
+		grep -q "^## \[$$version\] - " RELEASE_NOTES.md || { echo "error: RELEASE_NOTES.md has no heading for $$version"; exit 1; }; \
+		if grep -qi '^## \[Unreleased' RELEASE_NOTES.md; then echo "error: RELEASE_NOTES.md still has an Unreleased section"; exit 1; fi; \
 	fi
 	@check="$(RELEASE_CHECK_DIR)"; \
 	if [ -e "$$check" ]; then echo "error: $$check exists, move it aside first"; exit 1; fi; \
@@ -68,10 +68,10 @@ release-check: ## Build, vet and test an export of HEAD and import it from a sep
 	echo "release check passed for $$(git -C "$(CURDIR)" rev-parse --short HEAD)"
 
 .PHONY: release-body
-release-body: require-version ## Extract the CHANGELOG.md section of VERSION into dist/release-body.md.
+release-body: require-version ## Extract the RELEASE_NOTES.md section of VERSION into dist/release-body.md.
 	@mkdir -p dist
-	@version="$(VERSION)"; awk -v want="## [$${version#v}]" 'index($$0, want) == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' CHANGELOG.md | sed '/./,$$!d' > dist/release-body.md
-	@grep -q '[^[:space:]]' dist/release-body.md || { echo "error: CHANGELOG.md has no section for $(VERSION)" >&2; exit 1; }
+	@version="$(VERSION)"; awk -v want="## [$${version#v}]" 'index($$0, want) == 1 { found = 1; next } found && /^## \[/ { exit } found { print }' RELEASE_NOTES.md | sed '/./,$$!d' > dist/release-body.md
+	@grep -q '[^[:space:]]' dist/release-body.md || { echo "error: RELEASE_NOTES.md has no section for $(VERSION)" >&2; exit 1; }
 	@echo "Wrote dist/release-body.md"
 
 .PHONY: sbom
