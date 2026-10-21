@@ -7,6 +7,7 @@ package srptls_test
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -62,4 +63,40 @@ func Example_httpServer() {
 	}
 	go srv.Serve(l)
 	defer srv.Close()
+}
+
+// Example_httpClient sends an HTTPS request over TLS-SRP. The transport runs
+// the handshake in DialTLSContext. net/http leaves Response.TLS nil for
+// connections that are not crypto/tls, so the connection state, such as the
+// tls-unique value an EST client puts in its CSR, comes from the Conn.
+func Example_httpClient() {
+	config := &srptls.Config{
+		Username:   "device-1",
+		Password:   "secret",
+		ServerName: "est.example",
+	}
+	transport := &http.Transport{
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			raw, err := new(net.Dialer).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			conn := srptls.Client(raw, config)
+			if err := conn.HandshakeContext(ctx); err != nil {
+				raw.Close()
+				if errors.Is(err, srptls.ErrWrongPassword) {
+					return nil, fmt.Errorf("wrong username or password: %w", err)
+				}
+				return nil, err
+			}
+			log.Printf("tls-unique %x", conn.ConnectionState().TLSUnique)
+			return conn, nil
+		},
+	}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	resp, err := client.Get("https://est.example:8443/.well-known/est/cacerts")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
 }

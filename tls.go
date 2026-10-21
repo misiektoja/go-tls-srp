@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package srptls is a TLS 1.2 server that authenticates clients with SRP, the
-// Secure Remote Password key exchange of RFC 5054. It is a trimmed copy of
-// Go's crypto/tls that serves the SRP cipher suites without certificates. It
-// has no client side, no TLS 1.3, no session resumption, no renegotiation and
-// no certificate authentication.
+// Package srptls is a TLS 1.2 client and server that authenticate with SRP,
+// the Secure Remote Password key exchange of RFC 5054. The client proves that
+// it knows a password and the server proves that it holds the verifier made
+// from it, without certificates. Use [Server] or [Listen] for the server side
+// and [Client] for the client side. It is a trimmed copy of Go's crypto/tls
+// with the SRP cipher suites only. It has no TLS 1.3, no session resumption,
+// no renegotiation and no certificate authentication.
 package srptls
 
 // BUG(agl): The crypto/tls package only implements some countermeasures
