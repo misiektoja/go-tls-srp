@@ -1,0 +1,45 @@
+# Runs the client against openssl s_server. The s_server of OpenSSL 3.0 and later cannot serve SRP, so
+# the job builds OpenSSL 1.1.1 from a checksum-pinned source release and caches the binary.
+name: Interoperability
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  openssl:
+    permissions:
+      contents: read
+    name: OpenSSL s_server interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # The build script pins the version, the checksum and the build options, so its hash names
+      # exactly one binary. A cache miss builds it, which takes a few minutes.
+      - name: Restore OpenSSL 1.1.1
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin/openssl-1.1.1/bin/openssl
+          key: openssl-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build-openssl.sh') }}
+
+      - name: Run the client against s_server
+        run: make test-interop
