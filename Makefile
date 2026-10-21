@@ -38,6 +38,15 @@ tidy-check: ## Fail when go.mod or go.sum is not tidy.
 test: vet ## Run the tests under the race detector.
 	go test -race -count=1 ./...
 
+# OPENSSL_PREFIX holds the OpenSSL 1.1.1 build that test-interop runs against.
+OPENSSL_PREFIX ?= $(LOCALBIN)/openssl-1.1.1
+
+# The -list check fails a renamed test, which -run would otherwise skip without an error.
+.PHONY: test-interop
+test-interop: openssl ## Run the client against OpenSSL 1.1.1 s_server. Builds OpenSSL on first use.
+	@go test -list '^TestOpenSSLServer$$' . | grep -x TestOpenSSLServer >/dev/null || { echo "error: TestOpenSSLServer is missing"; exit 1; }
+	SRPTLS_TEST_OPENSSL="$(OPENSSL_PREFIX)/bin/openssl" go test -race -count=1 -v -run '^TestOpenSSLServer$$' .
+
 ##@ Release
 
 # VERSION names the release tag, for example v0.1.0. Every artifact is named after it.
@@ -163,6 +172,10 @@ gitleaks-tool: | $(LOCALBIN) ## Download gitleaks locally if necessary.
 .PHONY: actionlint-tool
 actionlint-tool: | $(LOCALBIN) ## Download actionlint locally if necessary.
 	$(call go-install-tool,$(ACTIONLINT),github.com/rhysd/actionlint/cmd/actionlint,$(ACTIONLINT_VERSION))
+
+.PHONY: openssl
+openssl: | $(LOCALBIN) ## Build OpenSSL 1.1.1 for test-interop if necessary.
+	scripts/build-openssl.sh "$(OPENSSL_PREFIX)"
 
 .PHONY: cyclonedx-gomod
 cyclonedx-gomod: | $(LOCALBIN) ## Download cyclonedx-gomod locally if necessary.
