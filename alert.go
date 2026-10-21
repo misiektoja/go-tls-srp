@@ -7,7 +7,7 @@ package srptls
 import "strconv"
 
 // alert is a TLS alert description. Record layer errors carry it in a
-// *net.OpError, with Op "local error" for an alert this server sent and
+// *net.OpError, with Op "local error" for an alert this side sent and
 // "remote error" for one it received.
 type alert uint8
 

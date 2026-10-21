@@ -50,8 +50,8 @@ func readUint24LengthPrefixed(s *cryptobyte.String, out *[]byte) bool {
 	return s.ReadUint24LengthPrefixed((*cryptobyte.String)(out))
 }
 
-// clientHelloMsg holds the ClientHello fields a TLS-SRP server uses. Other
-// extensions are skipped.
+// clientHelloMsg holds the ClientHello fields a TLS-SRP client sends and a
+// server uses. Other extensions are skipped when parsing.
 type clientHelloMsg struct {
 	original                     []byte
 	vers                         uint16
@@ -266,6 +266,9 @@ type serverHelloMsg struct {
 	secureRenegotiation          []byte
 	extendedMasterSecret         bool
 	serverNameAck                bool
+	// unknownExtension is set when a parsed ServerHello has an extension
+	// this package never offers. It is not marshaled.
+	unknownExtension bool
 }
 
 // marshal returns the wire form of the ServerHello.
@@ -314,7 +317,8 @@ func (m *serverHelloMsg) marshal() ([]byte, error) {
 	return b.Bytes()
 }
 
-// unmarshal parses a ServerHello with the extensions this package sends.
+// unmarshal parses a ServerHello. Extensions other than those this package
+// sends are skipped and recorded in unknownExtension.
 func (m *serverHelloMsg) unmarshal(data []byte) bool {
 	*m = serverHelloMsg{}
 	s := cryptobyte.String(data)
@@ -362,7 +366,8 @@ func (m *serverHelloMsg) unmarshal(data []byte) bool {
 		case extensionServerName:
 			m.serverNameAck = true
 		default:
-			return false
+			m.unknownExtension = true
+			continue
 		}
 
 		if !extData.Empty() {
@@ -419,6 +424,35 @@ func marshalSRPParams(n, g, salt, b []byte) ([]byte, error) {
 	return params.Bytes()
 }
 
+// unmarshalSRPParams decodes ServerSRPParams from RFC 5054, Section 2.8.2.
+// Every field must be non-empty, as the syntax requires, and nothing may
+// follow them because the suites of this package send no signature.
+func unmarshalSRPParams(body []byte) (n, g, salt, b []byte, ok bool) {
+	s := cryptobyte.String(body)
+	if !readUint16LengthPrefixed(&s, &n) || len(n) == 0 ||
+		!readUint16LengthPrefixed(&s, &g) || len(g) == 0 ||
+		!readUint8LengthPrefixed(&s, &salt) || len(salt) == 0 ||
+		!readUint16LengthPrefixed(&s, &b) || len(b) == 0 ||
+		!s.Empty() {
+		return nil, nil, nil, nil, false
+	}
+	return n, g, salt, b, true
+}
+
+// helloRequestMsg asks the client for a new handshake, RFC 5246, Section
+// 7.4.1.1. The client refuses it.
+type helloRequestMsg struct{}
+
+// marshal returns the wire form of the HelloRequest.
+func (*helloRequestMsg) marshal() ([]byte, error) {
+	return []byte{typeHelloRequest, 0, 0, 0}, nil
+}
+
+// unmarshal checks that the HelloRequest is empty.
+func (*helloRequestMsg) unmarshal(data []byte) bool {
+	return len(data) == 4
+}
+
 // serverHelloDoneMsg ends the server's first flight.
 type serverHelloDoneMsg struct{}
 
@@ -463,6 +497,16 @@ func (m *clientKeyExchangeMsg) unmarshal(data []byte) bool {
 	}
 	m.ciphertext = data[4:]
 	return true
+}
+
+// marshalSRPClientPublic encodes A as the ClientSRPPublic structure of
+// RFC 5054, Section 2.8.3.
+func marshalSRPClientPublic(a []byte) ([]byte, error) {
+	var b cryptobyte.Builder
+	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes(a)
+	})
+	return b.Bytes()
 }
 
 // srpClientPublic returns srp_A from a ClientKeyExchange body, the

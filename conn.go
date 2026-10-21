@@ -25,7 +25,8 @@ import (
 // It implements the net.Conn interface.
 type Conn struct {
 	// constant
-	conn net.Conn
+	conn     net.Conn
+	isClient bool
 
 	// isHandshakeComplete is true if the connection is currently transferring
 	// application data (i.e. is not currently processing a handshake).
@@ -767,8 +768,8 @@ func (c *Conn) writeRecordLocked(typ recordType, data []byte) (int, error) {
 		outBuf[0] = byte(typ)
 		vers := c.vers
 		if vers == 0 {
-			// An alert sent before the version is known uses TLS 1.0, which
-			// every client accepts.
+			// The ClientHello and an alert sent before the version is known
+			// use TLS 1.0 in the record header, which every peer accepts.
 			vers = VersionTLS10
 		}
 		outBuf[1] = byte(vers >> 8)
@@ -855,18 +856,34 @@ func (c *Conn) readHandshake(transcript io.Writer) (any, error) {
 	return c.unmarshalHandshakeMessage(data, transcript)
 }
 
-// unmarshalHandshakeMessage parses the messages a TLS-SRP server receives.
-// Any other message type is an unexpected message.
+// unmarshalHandshakeMessage parses the messages this side of a TLS-SRP
+// handshake receives. Any other message type is an unexpected message.
 func (c *Conn) unmarshalHandshakeMessage(data []byte, transcript io.Writer) (handshakeMessage, error) {
 	var m handshakeMessage
-	switch data[0] {
-	case typeClientHello:
-		m = new(clientHelloMsg)
-	case typeClientKeyExchange:
-		m = new(clientKeyExchangeMsg)
-	case typeFinished:
-		m = new(finishedMsg)
-	default:
+	if c.isClient {
+		switch data[0] {
+		case typeHelloRequest:
+			m = new(helloRequestMsg)
+		case typeServerHello:
+			m = new(serverHelloMsg)
+		case typeServerKeyExchange:
+			m = new(serverKeyExchangeMsg)
+		case typeServerHelloDone:
+			m = new(serverHelloDoneMsg)
+		case typeFinished:
+			m = new(finishedMsg)
+		}
+	} else {
+		switch data[0] {
+		case typeClientHello:
+			m = new(clientHelloMsg)
+		case typeClientKeyExchange:
+			m = new(clientKeyExchangeMsg)
+		case typeFinished:
+			m = new(finishedMsg)
+		}
+	}
+	if m == nil {
 		return nil, c.in.setErrorLocked(c.sendAlert(alertUnexpectedMessage))
 	}
 
@@ -938,6 +955,12 @@ func (c *Conn) handlePostHandshakeMessage() error {
 	msg, err := c.readHandshake(nil)
 	if err != nil {
 		return err
+	}
+	if _, ok := msg.(*helloRequestMsg); ok && c.isClient {
+		// RFC 5246, Section 7.4.1.1 lets a client decline a HelloRequest with
+		// a no_renegotiation warning. As in crypto/tls, the connection then
+		// cannot be written to.
+		return c.sendAlert(alertNoRenegotiation)
 	}
 	c.sendAlert(alertUnexpectedMessage)
 	return fmt.Errorf("tls: received unexpected handshake message of type %T after the handshake", msg)
@@ -1057,7 +1080,7 @@ func (c *Conn) closeNotify() error {
 	return c.closeNotifyErr
 }
 
-// Handshake runs the server handshake if it has not yet been run.
+// Handshake runs the client or server handshake if it has not yet been run.
 //
 // Most uses of this package need not call Handshake explicitly: the
 // first [Conn.Read] or [Conn.Write] will call it automatically.
@@ -1068,7 +1091,7 @@ func (c *Conn) Handshake() error {
 	return c.HandshakeContext(context.Background())
 }
 
-// HandshakeContext runs the server handshake if it has not yet been run.
+// HandshakeContext runs the client or server handshake if it has not yet been run.
 //
 // The provided Context must be non-nil. If the context is canceled before
 // the handshake is complete, the handshake is interrupted and an error is returned.
@@ -1124,7 +1147,11 @@ func (c *Conn) handshakeContext(ctx context.Context) (ret error) {
 	c.in.Lock()
 	defer c.in.Unlock()
 
-	c.handshakeErr = c.serverHandshake(handshakeCtx)
+	if c.isClient {
+		c.handshakeErr = c.clientHandshake()
+	} else {
+		c.handshakeErr = c.serverHandshake(handshakeCtx)
+	}
 	if c.handshakeErr != nil {
 		// If an error occurred during the handshake try to flush the
 		// alert that might be left in the buffer.

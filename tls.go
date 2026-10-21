@@ -29,6 +29,19 @@ func Server(conn net.Conn, config *Config) *Conn {
 	}
 }
 
+// Client returns a new TLS-SRP client side connection using conn as the
+// underlying transport. The configuration must be non-nil and must set
+// Username. Otherwise the handshake fails before anything is sent. Like the
+// server, the client runs the handshake on the first Read or Write, or on
+// Handshake or HandshakeContext.
+func Client(conn net.Conn, config *Config) *Conn {
+	return &Conn{
+		conn:     conn,
+		config:   config,
+		isClient: true,
+	}
+}
+
 // A listener implements a network listener (net.Listener) for TLS connections.
 type listener struct {
 	net.Listener
