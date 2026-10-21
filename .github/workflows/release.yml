@@ -99,9 +99,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The release description is the CHANGELOG.md section for this version. Extracting it first
+      # The release description is the RELEASE_NOTES.md section for this version. Extracting it first
       # fails the run on a missing section while retagging is still cheap.
-      - name: Build the release description from the changelog
+      - name: Build the release description from the release notes
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: make release-body VERSION="$VERSION"

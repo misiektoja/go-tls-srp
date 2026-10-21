@@ -127,6 +127,45 @@ func TestRFC5054Vectors(t *testing.T) {
 	}
 }
 
+// TestSRPClientKeyExchange checks A and the client's premaster secret against
+// RFC 5054, Appendix B, and the refusal of a B that is not in 1 to N-1.
+func TestSRPClientKeyExchange(t *testing.T) {
+	tv := rfc5054Vectors
+	group, err := GroupByBits(1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientA, premaster, err := srpClientKeyExchange(group, unhex(t, tv.salt), unhex(t, tv.serverB),
+		[]byte(tv.username), []byte(tv.password), paddedExponent(unhex(t, tv.a)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(clientA, unhex(t, tv.clientA)) {
+		t.Errorf("A = %X", clientA)
+	}
+	if !bytes.Equal(premaster, unhex(t, tv.premaster)) {
+		t.Errorf("premaster = %X", premaster)
+	}
+	if _, _, err := srpClientKeyExchange(group, unhex(t, tv.salt), unhex(t, tv.serverB),
+		[]byte(tv.username), []byte(tv.password), bytes.NewReader(nil)); err == nil {
+		t.Error("srpClientKeyExchange succeeded without entropy")
+	}
+
+	// RFC 5054, Section 2.5.3.
+	n := new(big.Int).SetBytes(group.N())
+	for name, b := range map[string][]byte{
+		"empty":   nil,
+		"zero":    {0, 0},
+		"N":       group.N(),
+		"2N":      new(big.Int).Lsh(n, 1).Bytes(),
+		"above N": new(big.Int).Add(n, big.NewInt(1)).Bytes(),
+	} {
+		if _, _, err := srpClientKeyExchange(group, []byte{1}, b, []byte("user"), []byte("pass"), paddedExponent([]byte{9})); err != errBadServerPublic {
+			t.Errorf("B %s: err = %v", name, err)
+		}
+	}
+}
+
 // TestGroups checks that every RFC 5054 group has a safe prime of the stated
 // size. Groups above 2048 bits take seconds and are skipped with -short.
 func TestGroups(t *testing.T) {

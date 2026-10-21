@@ -308,7 +308,7 @@ func (hs *serverHandshakeState) establishKeys() error {
 	return nil
 }
 
-// sentAlert reports whether err is the alert a this server sent, not one it received.
+// sentAlert reports whether err is the alert this side sent, not one it received.
 func sentAlert(err error, a alert) bool {
 	var opErr *net.OpError
 	return errors.As(err, &opErr) && opErr.Op == "local error" && opErr.Err == a

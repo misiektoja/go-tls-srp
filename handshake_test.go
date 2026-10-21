@@ -167,7 +167,13 @@ func (tc *testClient) handshake() error {
 // readMessage reads one handshake message of the given type into m and adds
 // it to the transcript.
 func (tc *testClient) readMessage(typ uint8, m handshakeMessage) error {
-	c := tc.c
+	return readRawMessage(tc.c, &tc.transcript, typ, m)
+}
+
+// readRawMessage reads one handshake message of the given type from c into m
+// and adds it to transcript. Unlike readHandshake it accepts every message
+// type, so that the test peers can read the messages of either side.
+func readRawMessage(c *Conn, transcript *finishedHash, typ uint8, m handshakeMessage) error {
 	if err := c.readHandshakeBytes(4); err != nil {
 		return err
 	}
@@ -183,7 +189,7 @@ func (tc *testClient) readMessage(typ uint8, m handshakeMessage) error {
 	if !m.unmarshal(data) {
 		return fmt.Errorf("cannot parse handshake message %d", typ)
 	}
-	tc.transcript.Write(data)
+	transcript.Write(data)
 	return nil
 }
 
@@ -352,13 +358,20 @@ func TestHandshake(t *testing.T) {
 // record larger than the first small records.
 func exchangeData(t *testing.T, res handshakeResult) {
 	t.Helper()
+	exchangeConnData(t, res.client.c, res.server)
+}
+
+// exchangeConnData sends a request from client to server and a response
+// back. The request is larger than the first small records.
+func exchangeConnData(t *testing.T, client, server *Conn) {
+	t.Helper()
 	request := bytes.Repeat([]byte("GET /.well-known/est/cacerts "), 1000)
 	response := []byte("HTTP/1.1 200 OK")
 
 	errc := make(chan error, 1)
 	go func() {
 		got := make([]byte, len(request))
-		if _, err := io.ReadFull(res.server, got); err != nil {
+		if _, err := io.ReadFull(server, got); err != nil {
 			errc <- err
 			return
 		}
@@ -366,14 +379,14 @@ func exchangeData(t *testing.T, res handshakeResult) {
 			errc <- errors.New("server read different data")
 			return
 		}
-		_, err := res.server.Write(response)
+		_, err := server.Write(response)
 		errc <- err
 	}()
-	if _, err := res.client.c.Write(request); err != nil {
+	if _, err := client.Write(request); err != nil {
 		t.Fatal(err)
 	}
 	got := make([]byte, len(response))
-	if _, err := io.ReadFull(res.client.c, got); err != nil {
+	if _, err := io.ReadFull(client, got); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-errc; err != nil {

@@ -137,6 +137,16 @@ func NewVerifier(group *Group, username, password, salt []byte) (*Verifier, erro
 	if len(username) < 1 || len(username) > 255 {
 		return nil, errors.New("srptls: username must be 1 to 255 bytes")
 	}
+	v := &Verifier{Group: group, Salt: append([]byte(nil), salt...), Value: group.exp(srpX(salt, username, password))}
+	if err := v.Validate(); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+// srpX returns the private key x = SHA1(s | SHA1(I | ":" | P)) of RFC 5054 Section 2.6. The
+// salt, username and password are hashed as given.
+func srpX(salt, username, password []byte) []byte {
 	inner := sha1.New()
 	inner.Write(username)
 	inner.Write([]byte(":"))
@@ -144,11 +154,7 @@ func NewVerifier(group *Group, username, password, salt []byte) (*Verifier, erro
 	outer := sha1.New()
 	outer.Write(salt)
 	outer.Write(inner.Sum(nil))
-	v := &Verifier{Group: group, Salt: append([]byte(nil), salt...), Value: group.exp(outer.Sum(nil))}
-	if err := v.Validate(); err != nil {
-		return nil, err
-	}
-	return v, nil
+	return outer.Sum(nil)
 }
 
 // NewSalt returns a random salt of 20 bytes without a leading zero byte. OpenSSL clients
@@ -210,7 +216,7 @@ type srpServer struct {
 	public []byte
 }
 
-// srpPrivateKeyLen is the size of the server's random exponent b. RFC 5054 asks for at least
+// srpPrivateKeyLen is the size of the random exponents a and b. RFC 5054 asks for at least
 // 256 bits. OpenSSL uses 384 bits.
 const srpPrivateKeyLen = 48
 
@@ -259,6 +265,53 @@ func (s *srpServer) premasterSecret(clientPublic []byte) ([]byte, error) {
 	base.Mul(a, group.mod)
 	premaster := bigmod.NewNat().Exp(base, s.b, group.mod).Bytes(group.mod)
 	return trimLeadingZeros(premaster), nil
+}
+
+// errBadServerPublic means the server's B is zero modulo N, not below N or gives u = 0.
+var errBadServerPublic = errors.New("srptls: invalid server public value")
+
+// srpClientKeyExchange draws the client's exponent a and returns A = g^a mod N and the
+// premaster secret S = (B - k*g^x)^(a + u*x) mod N of RFC 5054 Section 2.6, with
+// u = SHA1(PAD(A) | PAD(B)) and x from srpX. Both are returned without leading zero bytes, as
+// the server side expects. The group must be an RFC 5054 group.
+func srpClientKeyExchange(group *Group, salt, serverPublic, username, password []byte, rand io.Reader) (clientPublic, premaster []byte, err error) {
+	// RFC 5054 Section 2.5.3 refuses B % N = 0. An honest server sends B reduced modulo N, so
+	// any value not below N is refused too.
+	serverPublic = trimLeadingZeros(serverPublic)
+	if len(serverPublic) == 0 || len(serverPublic) > len(group.n) {
+		return nil, nil, errBadServerPublic
+	}
+	b, err := bigmod.NewNat().SetBytes(serverPublic, group.mod)
+	if err != nil || b.IsZero() == 1 {
+		return nil, nil, errBadServerPublic
+	}
+
+	a := make([]byte, srpPrivateKeyLen)
+	if _, err := io.ReadFull(rand, a); err != nil {
+		return nil, nil, err
+	}
+	public := group.exp(a)
+
+	h := sha1.New()
+	h.Write(public)
+	h.Write(group.pad(serverPublic))
+	u := h.Sum(nil)
+	if allZero(u) {
+		return nil, nil, errBadServerPublic
+	}
+
+	// base = B - k*g^x mod N, which is g^b for a server that holds v = g^x.
+	x := srpX(salt, username, password)
+	kgx := bigmod.NewNat().Exp(group.gNat, x, group.mod)
+	kgx.Mul(group.k, group.mod)
+	base := b.Sub(kgx, group.mod)
+
+	// base^(a + u*x) is computed as base^a * (base^u)^x, so that the secret exponents a and x
+	// stay in constant-time exponentiations and the sum a + u*x is never formed.
+	s := bigmod.NewNat().Exp(base, a, group.mod)
+	baseU := bigmod.NewNat().Exp(base, u, group.mod)
+	s.Mul(bigmod.NewNat().Exp(baseU, x, group.mod), group.mod)
+	return trimLeadingZeros(public), trimLeadingZeros(s.Bytes(group.mod)), nil
 }
 
 // trimLeadingZeros returns b without leading zero bytes.

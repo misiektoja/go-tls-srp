@@ -80,10 +80,12 @@ type ConnectionState struct {
 	CipherSuite uint16
 
 	// ServerName is the value of the Server Name Indication extension sent by
-	// the client.
+	// the client. On a client connection it is the name the client sent, which
+	// is empty when Config.ServerName is empty or an IP address.
 	ServerName string
 
 	// SRPUsername is the username the client proved it holds the password of.
+	// On a client connection it is Config.Username.
 	SRPUsername string
 
 	// ExtendedMasterSecret is true if the client and server used the extended
@@ -143,43 +145,73 @@ func (c *ClientHelloInfo) Context() context.Context {
 // ErrUnknownUsername may be returned by Config.GetVerifier. The server then
 // aborts the handshake with an unknown_psk_identity alert, which tells the
 // client that the username does not exist. Return a SimulatedVerifier
-// instead to hide which usernames exist.
+// instead to hide which usernames exist. A client handshake error wraps
+// ErrUnknownUsername when the server sends that alert.
 var ErrUnknownUsername = errors.New("srptls: unknown SRP username")
 
 // ErrAccessDenied may be returned by Config.GetVerifier, also wrapped, to refuse a client, for
 // example one over a rate limit. The server then aborts the handshake with an access_denied alert
-// before it does the costly SRP computation.
+// before it does the costly SRP computation. A client handshake error wraps ErrAccessDenied when
+// the server sends that alert.
 var ErrAccessDenied = errors.New("srptls: access denied")
 
 // ErrWrongPassword is wrapped by the handshake error when the client's Finished message does not
 // decrypt or does not verify. With SRP that means the client used another password than the
 // verifier was made from, or the username is unknown and a simulated verifier answered. An
-// attacker who alters the client's records on the way causes the same error.
+// attacker who alters the client's records on the way causes the same error. On the client it is
+// wrapped when the server answers the client's Finished message with a bad_record_mac alert.
 var ErrWrongPassword = errors.New("srptls: wrong SRP password")
 
-// A Config structure is used to configure a TLS-SRP server. After one has
+// defaultMinGroupBits is the smallest SRP group a client accepts when Config.MinGroupBits is zero.
+const defaultMinGroupBits = 2048
+
+// A Config structure is used to configure a TLS-SRP client or server. Some
+// fields apply to one side only, as their documentation says. After one has
 // been passed to a TLS function it must not be modified. A Config may be
 // reused.
 type Config struct {
 	// GetVerifier returns the SRP verifier for the username in the
-	// ClientHello. It is required. Any error other than ErrUnknownUsername
-	// and ErrAccessDenied aborts the handshake with an internal_error alert.
+	// ClientHello. It is required on the server and not used by the client.
+	// Any error other than ErrUnknownUsername and ErrAccessDenied aborts the
+	// handshake with an internal_error alert.
 	GetVerifier func(*ClientHelloInfo) (*Verifier, error)
 
-	// CipherSuites is the server's preference order of SRP cipher suites.
-	// The server picks the first one the client offers. If nil, the server
-	// uses TLS_SRP_SHA_WITH_AES_256_CBC_SHA and then
+	// Username is the SRP username the client sends in the SRP extension of
+	// its ClientHello, RFC 5054 Section 2.8.1. It is required on the client,
+	// must be 1 to 255 bytes and is not used by the server. Like Password it
+	// is hashed as given, without SASLprep.
+	Username string
+
+	// Password is the client's SRP password. It is not used by the server.
+	Password string
+
+	// ServerName is the host name the client sends in the Server Name
+	// Indication extension. A trailing dot is removed. An IP address is not
+	// sent. It is not used by the server.
+	ServerName string
+
+	// MinGroupBits is the prime size in bits of the smallest RFC 5054 group
+	// the client accepts from the server. If zero, it is 2048, so the 1024
+	// and 1536 bit groups must be allowed explicitly. It must not exceed 8192,
+	// the largest group. It is not used by the server, which uses the group of
+	// the verifier.
+	MinGroupBits int
+
+	// CipherSuites is the preference order of SRP cipher suites. The server
+	// picks the first one the client offers. The client offers them in this
+	// order. If nil, both use TLS_SRP_SHA_WITH_AES_256_CBC_SHA and then
 	// TLS_SRP_SHA_WITH_AES_128_CBC_SHA. TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA is
 	// used only when listed here.
 	CipherSuites []uint16
 
-	// Rand provides the source of entropy for nonces and the server's SRP
-	// private value. If Rand is nil, the server uses crypto/rand.
+	// Rand provides the source of entropy for nonces and the SRP private
+	// values of the client and the server. If Rand is nil, crypto/rand is
+	// used.
 	Rand io.Reader
 
 	// KeyLogWriter optionally specifies a destination for TLS master secrets
 	// in NSS key log format that can be used to allow external programs
-	// such as Wireshark to decrypt TLS connections.
+	// such as Wireshark to decrypt TLS connections. It works on both sides.
 	// See https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS/Key_Log_Format.
 	// Use of KeyLogWriter compromises security and should only be
 	// used for debugging.
@@ -195,12 +227,54 @@ func (c *Config) rand() io.Reader {
 	return r
 }
 
-// cipherSuites returns the server's preference order of cipher suites.
+// cipherSuites returns the configured preference order of cipher suites.
 func (c *Config) cipherSuites() []uint16 {
 	if c.CipherSuites != nil {
 		return c.CipherSuites
 	}
 	return defaultCipherSuites
+}
+
+// clientCipherSuites returns the cipher suites the client offers, in preference order. IDs of
+// suites this package does not implement are left out.
+func (c *Config) clientCipherSuites() []uint16 {
+	var ids []uint16
+	for _, id := range c.cipherSuites() {
+		if cipherSuiteByID(id) != nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// minGroupBits returns the size of the smallest SRP group the client accepts.
+func (c *Config) minGroupBits() int {
+	if c.MinGroupBits == 0 {
+		return defaultMinGroupBits
+	}
+	return c.MinGroupBits
+}
+
+// clientConfigError reports why config cannot be used for a client handshake, or nil.
+func clientConfigError(config *Config) error {
+	if config == nil {
+		return errors.New("srptls: Client needs a non-nil Config")
+	}
+	// RFC 5054 Section 2.8.1: opaque srp_I<1..2^8-1>.
+	if len(config.Username) < 1 || len(config.Username) > 255 {
+		return errors.New("srptls: Config.Username must be 1 to 255 bytes")
+	}
+	largest := 0
+	for _, g := range groups {
+		largest = max(largest, g.bits)
+	}
+	if config.MinGroupBits < 0 || config.MinGroupBits > largest {
+		return fmt.Errorf("srptls: Config.MinGroupBits %d is outside 0 to %d", config.MinGroupBits, largest)
+	}
+	if len(config.clientCipherSuites()) == 0 {
+		return errors.New("srptls: Config.CipherSuites lists no SRP cipher suite of this package")
+	}
+	return nil
 }
 
 const keyLogLabelTLS12 = "CLIENT_RANDOM"
