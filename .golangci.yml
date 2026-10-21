@@ -1,0 +1,74 @@
+version: "2"
+run:
+  allow-parallel-runners: true
+# Most of the code is crypto/tls from Go and is ported from newer Go releases by diff. The linters that
+# only object to the upstream style, such as errorlint, exhaustive, gocyclo, lll, modernize, nakedret,
+# noctx, revive and unparam, stay off so that porting does not turn into restyling.
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - copyloopvar
+    - dupl
+    - errcheck
+    - gocritic
+    - goconst
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - prealloc
+    - staticcheck
+    - unconvert
+    - unused
+  settings:
+    errcheck:
+      # crypto/tls ignores these errors by design. The handshake or Close already returns the error
+      # that ended the connection, and finishedHash only feeds hashes.
+      exclude-functions:
+        - (*github.com/misiektoja/go-tls-srp.Conn).sendAlert
+        - (*github.com/misiektoja/go-tls-srp.Conn).sendAlertLocked
+        - (*github.com/misiektoja/go-tls-srp.Conn).flush
+        - (*github.com/misiektoja/go-tls-srp.Conn).SetWriteDeadline
+        - (*github.com/misiektoja/go-tls-srp.halfConn).setErrorLocked
+        - (*github.com/misiektoja/go-tls-srp.finishedHash).Write
+    gosec:
+      excludes:
+        # errcheck reports unchecked errors and knows the exclusions above.
+        - G104
+        # RFC 5054 fixes SHA-1 for the SRP values and the SRP cipher suites use HMAC-SHA1 and 3DES.
+        - G401
+        - G405
+        - G502
+        - G505
+        # The record and handshake encoders convert lengths that were bounds checked before.
+        - G115
+  exclusions:
+    generated: lax
+    rules:
+      # The handshake transcript is a finishedHash behind io.Writer.
+      - linters:
+          - errcheck
+        path: ^conn\.go$
+        text: "`transcript.Write`"
+      # crypto/tls still lets a temporary net.Error through without failing the connection.
+      - linters:
+          - staticcheck
+        path: ^conn\.go$
+        text: "SA1019: \\(net.Error\\).Temporary"
+      # Test code closes bodies, ignores errors, repeats setup and repeats literals on purpose.
+      - linters:
+          - bodyclose
+          - dupl
+          - errcheck
+          - goconst
+          - gosec
+        path: _test\.go$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/misiektoja/go-tls-srp
