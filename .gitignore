@@ -2,3 +2,6 @@
 dist/
 bin/
 .cache/
+
+# Local development files
+/local
