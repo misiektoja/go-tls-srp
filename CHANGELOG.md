@@ -2,7 +2,7 @@
 
 Notable changes to go-tls-srp.
 
-## [0.2.0] - TBD
+## [0.2.0] - 2026-10-21
 
 Adds the client side. `srptls.Client` signs in to TLS-SRP servers with a username and password.
 Tested against OpenSSL 1.1.1w `s_server`.
