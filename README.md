@@ -95,7 +95,25 @@ On the client, the handshake error wraps `ErrWrongPassword` when the server answ
 
 * OpenSSL 1.1.1w `s_server` with `-srpvfile` and verifiers made by `openssl srp`.
 
-`openssl s_server` from OpenSSL 3.0.22, 3.5.9, 3.6.5 and 4.0.3 closes the connection during its SRP user lookup, also with its own `s_client`. To run the client against `s_server`, set `SRPTLS_TEST_OPENSSL` to an OpenSSL 1.1.1 binary and run `go test -run TestOpenSSLServer`.
+`openssl s_server` from OpenSSL 3.0.22, 3.5.9, 3.6.5 and 4.0.3 closes the connection during its SRP user lookup, also with its own `s_client`. `make test-interop` builds OpenSSL 1.1.1w from source under `bin/` and runs the client against its `s_server`. To use another OpenSSL 1.1.1 binary, set `SRPTLS_TEST_OPENSSL` to it and run `go test -run TestOpenSSLServer`.
+
+## Development
+
+The Makefile runs the same checks as CI:
+
+```bash
+make test           # go vet and the tests under the race detector
+make lint           # golangci-lint
+make actionlint     # lint the GitHub Actions workflows
+make test-interop   # the client against OpenSSL 1.1.1w s_server
+make govulncheck    # known vulnerabilities that reach the code
+make gitleaks       # leaked credentials in the tree and the history
+make help           # every target
+```
+
+The recipes use the Go version from `go.mod` and download it when needed. The pinned tools are installed under `bin/` on first use. Building OpenSSL needs a C compiler, make and perl. Most of the code is `crypto/tls` from Go, so `.golangci.yml` leaves out linters that only object to its style.
+
+Pull requests to `main` and `dev` must pass the tests, lint, the OpenSSL interop test, govulncheck and gitleaks.
 
 ## Following Go releases
 
