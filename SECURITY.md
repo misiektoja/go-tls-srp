@@ -12,7 +12,7 @@ The maintainer will acknowledge the report and coordinate disclosure once a fix 
 
 ## Fixes from Go
 
-This module carries a trimmed copy of Go's `crypto/tls`. A security fix in the kept files of a newer Go release is ported when `make upstream-check` reports the change, as the README's "Following Go releases" section describes. It ships in the next release. A Go security release in `crypto/tls` is rated with the tiers below as if it were a report against this module.
+This module carries a trimmed copy of Go's `crypto/tls`. A security fix in the kept files of a newer Go release is ported when `make upstream-check` reports the change, as the "Following Go releases" section of [CONTRIBUTING.md](CONTRIBUTING.md#following-go-releases) describes. It ships in the next release. A Go security release in `crypto/tls` is rated with the tiers below as if it were a report against this module.
 
 ## Severity and fix targets
 
