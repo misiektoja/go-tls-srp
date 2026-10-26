@@ -134,6 +134,19 @@ upstream-check: ## Fail when a Go release newer than UPSTREAM_GO_VERSION changed
 	if [ -n "$$changed" ]; then echo "error: $$candidate_version changed$$changed. Port the changes to the kept files and raise UPSTREAM_GO_VERSION"; exit 1; fi; \
 	echo "no kept file changed between go$(UPSTREAM_GO_VERSION) and $$candidate_version"
 
+# The newest patch release of the Go minor in go.mod comes from the versions of the toolchain
+# module on the module proxy. Every release is published for every platform, so the local one
+# filters the list. Release candidates have no numeric patch and are skipped.
+.PHONY: go-version-check
+go-version-check: ## Fail when a newer patch release of the Go minor in go.mod exists.
+	@version="$(GO_VERSION)"; minor="$${version%.*}"; patch="$${version##*.}"; \
+	platform="$$(go env GOOS)-$$(go env GOARCH)"; \
+	versions="$$(go list -m -versions golang.org/toolchain)" || exit 1; \
+	latest="$$(printf '%s\n' $$versions | sed -n -E "s/^v0\.0\.1-go$$minor\.([0-9]+)\.$$platform\$$/\1/p" | sort -n | tail -n 1)"; \
+	if [ -z "$$latest" ]; then echo "error: no go$$minor release found for $$platform" >&2; exit 1; fi; \
+	if [ "$$latest" -gt "$$patch" ]; then echo "error: go.mod requires go $$version but go$$minor.$$latest is the newest go$$minor release. Raise the go directive in go.mod" >&2; exit 1; fi; \
+	echo "go $$version is the newest go$$minor release"
+
 ##@ Checks
 
 .PHONY: lint
