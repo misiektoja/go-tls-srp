@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [0.2.1] - TBD
+## [0.2.1] - 26 Oct 2026
 
 This release requires **Go 1.27.3** and documents how to keep unknown usernames hidden and how to bound the server cost of a handshake.
 
