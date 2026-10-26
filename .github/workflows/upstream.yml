@@ -1,7 +1,7 @@
 # Compares the kept crypto/tls files of the Go release they were copied from with the newest
 # stable Go release and fails when Go changed one of them, so a fix in Go's TLS code is ported
 # instead of missed. Also fails when go.mod names an older patch release of its Go minor than
-# the newest one. The README's "Following Go releases" section says how to act on both.
+# the newest one. The "Following Go releases" section of CONTRIBUTING.md says how to act on both.
 name: Upstream Go
 
 on:
