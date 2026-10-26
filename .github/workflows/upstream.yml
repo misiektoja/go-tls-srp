@@ -1,0 +1,49 @@
+# Compares the kept crypto/tls files of the Go release they were copied from with the newest
+# stable Go release and fails when Go changed one of them, so a fix in Go's TLS code is ported
+# instead of missed. Also fails when go.mod names an older patch release of its Go minor than
+# the newest one. The "Following Go releases" section of CONTRIBUTING.md says how to act on both.
+name: Upstream Go
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+  schedule:
+    # A weekly run catches a Go release that arrives without a change here.
+    - cron: "41 6 * * 1"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    permissions:
+      contents: read
+    name: Kept crypto/tls files
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The newest stable release is the candidate, unlike the other workflows, which follow go.mod.
+      - name: Setup the newest stable Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Check for a newer Go patch release
+        run: make go-version-check
+
+      # Runs after a failed version check too, so one run reports both results.
+      - name: Compare the kept files with the newest Go
+        if: ${{ !cancelled() }}
+        run: make upstream-check

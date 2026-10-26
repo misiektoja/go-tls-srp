@@ -1,6 +1,6 @@
 module github.com/misiektoja/go-tls-srp
 
-go 1.27.1
+go 1.27.3
 
 require (
 	filippo.io/bigmod v0.1.0

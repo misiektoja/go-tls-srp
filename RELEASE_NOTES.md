@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.1] - 26 Oct 2026
+
+This release requires **Go 1.27.3** and documents how to keep unknown usernames hidden and how to bound the server cost of a handshake.
+
+### Server
+
+* **`SimulatedVerifier` seed** - The seed is a secret key. Generate at least 16 random bytes once, store them with the verifiers and use the same seed on every server instance. The simulated verifier must use the group of the stored verifiers. The HTTPS example reads the seed from the `SRP_SIMULATED_SEED` environment variable.
+* **Handshake cost** - The security notes in the README describe the server cost of a handshake. The library sets no handshake deadline, so limit the connections a client can open and set a deadline on each accepted connection before its handshake.
+
+### Requirements
+
+* **Go 1.27.3** - `go.mod` requires the newest Go 1.27 patch release, so the tests, lint and govulncheck run against a current standard library. `make go-version-check` fails when a newer patch release exists and the Upstream Go workflow runs it on every push and weekly.
+
 ## [0.2.0] - 21 Oct 2026
 
 This release adds the **client side**. `srptls.Client` signs in to TLS-SRP servers with a username and password. Tested against OpenSSL 1.1.1w `s_server`.
