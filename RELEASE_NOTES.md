@@ -9,7 +9,7 @@ This release requires **Go 1.27.3** and documents how to keep unknown usernames 
 ### Server
 
 * **`SimulatedVerifier` seed** - The seed is a secret key. Generate at least 16 random bytes once, store them with the verifiers and use the same seed on every server instance. The simulated verifier must use the group of the stored verifiers. The HTTPS example reads the seed from the `SRP_SIMULATED_SEED` environment variable.
-* **Handshake cost** - The security notes in the README give the server cost of a handshake by group. The library sets no handshake deadline, so limit the connections a client can open and set a deadline on each accepted connection before its handshake.
+* **Handshake cost** - The security notes in the README describe the server cost of a handshake. The library sets no handshake deadline, so limit the connections a client can open and set a deadline on each accepted connection before its handshake.
 
 ### Requirements
 
