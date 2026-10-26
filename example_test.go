@@ -7,11 +7,13 @@ package srptls_test
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	srptls "github.com/misiektoja/go-tls-srp"
@@ -35,8 +37,13 @@ func Example_httpServer() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// The seed must stay the same across restarts and replicas.
-	seed := []byte("load this from configuration")
+	// The seed is a secret. Generate at least 16 random bytes once, store them
+	// with the verifiers and use the same value on every instance and across
+	// restarts.
+	seed, err := hex.DecodeString(os.Getenv("SRP_SIMULATED_SEED"))
+	if err != nil || len(seed) < 16 {
+		log.Fatal("SRP_SIMULATED_SEED must hold at least 32 hexadecimal digits")
+	}
 
 	config := &srptls.Config{
 		GetVerifier: func(info *srptls.ClientHelloInfo) (*srptls.Verifier, error) {
