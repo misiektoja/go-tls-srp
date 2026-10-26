@@ -129,6 +129,8 @@ Commit `b52d68c` holds `crypto/tls` from Go 1.27.2 unchanged. The kept files are
 
 `make upstream-check` compares those files of Go 1.27.2, the `UPSTREAM_GO_VERSION` in the Makefile, with the installed Go release and fails when one of them changed. The Upstream Go workflow runs it against the newest stable Go release on every push and weekly, so a fix in Go's TLS code shows up here within a week. To compare with a specific release instead, set `UPSTREAM_CANDIDATE=go1.28.0`.
 
+`make go-version-check` fails when a newer patch release of the Go minor in `go.mod` exists, so the tests, lint and govulncheck run against a current standard library. The Upstream Go workflow runs it as well. When it fails, raise the `go` directive in `go.mod` to that release.
+
 When the check fails, port the changes that affect the TLS 1.2 client or server, the CBC record layer or the handshake message parsing, then raise `UPSTREAM_GO_VERSION` to the release you ported. The check prints the diff. To see it for one file:
 
 ```bash
