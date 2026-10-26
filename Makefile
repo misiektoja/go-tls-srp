@@ -108,6 +108,32 @@ release-checksums: release-source-archives ## Write SHA-256 checksums for the so
 	@test -f "$(SBOM_FILE)" || { echo "Run sbom with the same VERSION first, $(SBOM_FILE) is missing" >&2; exit 1; }
 	cd dist && shasum -a 256 "$(notdir $(SBOM_FILE))" "$(notdir $(SOURCE_ZIP))" "$(notdir $(SOURCE_TAR_GZ))" | tee "$(notdir $(RELEASE_CHECKSUMS))"
 
+##@ Upstream
+
+# UPSTREAM_GO_VERSION is the Go release the kept crypto/tls files were copied from. Raise it after
+# porting the changes of a newer release. UPSTREAM_FILES are those files, as the README lists them.
+UPSTREAM_GO_VERSION ?= 1.27.2
+UPSTREAM_FILES := alert.go cipher_suites.go common.go conn.go handshake_messages.go handshake_server.go prf.go tls.go
+# UPSTREAM_CANDIDATE is the GOTOOLCHAIN value of the Go release to compare with: local for the
+# installed one, which CI makes the newest stable release. A version such as go1.28.0 selects
+# another release.
+UPSTREAM_CANDIDATE ?= local
+
+# The toolchain of UPSTREAM_GO_VERSION is downloaded through the module proxy when it is not
+# installed. Both go env calls override the GOTOOLCHAIN this Makefile exports.
+.PHONY: upstream-check
+upstream-check: ## Fail when a Go release newer than UPSTREAM_GO_VERSION changed a kept crypto/tls file.
+	@base="$$(GOTOOLCHAIN=go$(UPSTREAM_GO_VERSION) go env GOROOT)/src/crypto/tls"; \
+	candidate_version="$$(GOTOOLCHAIN=$(UPSTREAM_CANDIDATE) go env GOVERSION)"; \
+	candidate="$$(GOTOOLCHAIN=$(UPSTREAM_CANDIDATE) go env GOROOT)/src/crypto/tls"; \
+	echo "comparing crypto/tls of go$(UPSTREAM_GO_VERSION) with $$candidate_version"; \
+	changed=""; \
+	for f in $(UPSTREAM_FILES); do \
+		if ! diff -u "$$base/$$f" "$$candidate/$$f"; then changed="$$changed $$f"; fi; \
+	done; \
+	if [ -n "$$changed" ]; then echo "error: $$candidate_version changed$$changed. Port the changes to the kept files and raise UPSTREAM_GO_VERSION"; exit 1; fi; \
+	echo "no kept file changed between go$(UPSTREAM_GO_VERSION) and $$candidate_version"
+
 ##@ Checks
 
 .PHONY: lint
