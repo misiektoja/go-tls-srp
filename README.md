@@ -127,7 +127,9 @@ Pull requests to `main` and `dev` must pass the tests, lint, the OpenSSL interop
 
 Commit `b52d68c` holds `crypto/tls` from Go 1.27.2 unchanged. The kept files are `alert.go`, `cipher_suites.go`, `common.go`, `conn.go`, `handshake_messages.go`, `handshake_server.go`, `prf.go` and `tls.go`. The client handshake in `handshake_client.go` follows the TLS 1.2 part of Go's `handshake_client.go`. The SRP code is in `srp.go` and `groups_rfc5054.go`.
 
-To pick up fixes from a newer Go release, compare its `crypto/tls` with Go 1.27.2 for those files and port the changes that affect the TLS 1.2 client or server, the CBC record layer or the handshake message parsing:
+`make upstream-check` compares those files of Go 1.27.2, the `UPSTREAM_GO_VERSION` in the Makefile, with the installed Go release and fails when one of them changed. The Upstream Go workflow runs it against the newest stable Go release on every push and weekly, so a fix in Go's TLS code shows up here within a week. To compare with a specific release instead, set `UPSTREAM_CANDIDATE=go1.28.0`.
+
+When the check fails, port the changes that affect the TLS 1.2 client or server, the CBC record layer or the handshake message parsing, then raise `UPSTREAM_GO_VERSION` to the release you ported. The check prints the diff. To see it for one file:
 
 ```bash
 git diff --no-index "$(go1.27.2 env GOROOT)/src/crypto/tls/conn.go" "$(go env GOROOT)/src/crypto/tls/conn.go"
