@@ -175,7 +175,14 @@ func NewSalt(rand io.Reader) ([]byte, error) {
 // Section 2.5.1.3 suggests. The same seed and username always give the same salt, and the
 // handshake fails like a wrong password. The verifier is a pseudo-random number below N rather
 // than g^x, because the client never sees it and an exponentiation would make unknown usernames
-// slower than known ones. Every server that answers the same clients must use the same seed.
+// slower than known ones.
+//
+// The seed is a secret key. Generate at least 16 random bytes once, store them with the
+// verifiers and use the same seed on every server that answers the same clients. A seed that
+// differs between servers or restarts lets a client spot an unknown username by its salt
+// changing, and anyone who knows the seed can compute the salt of any unknown username. The
+// group must be the group of the stored verifiers, because the server sends it in the clear
+// and a different group would give the username away as well.
 func SimulatedVerifier(seed []byte, group *Group, username []byte) *Verifier {
 	// A real salt never starts with a zero byte, so a simulated one must not either.
 	var salt []byte

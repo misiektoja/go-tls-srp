@@ -43,7 +43,7 @@ l, err := srptls.Listen("tcp", ":8443", config)
 
 For an unknown username, return either a `SimulatedVerifier` or `ErrUnknownUsername`:
 
-* With `SimulatedVerifier`, the handshake fails exactly like a wrong password, with a `bad_record_mac` alert. The client cannot tell whether the username exists. Use the same seed on every server instance and keep it across restarts. Otherwise a client can spot an unknown username by its salt changing.
+* With `SimulatedVerifier`, the handshake fails exactly like a wrong password, with a `bad_record_mac` alert. The client cannot tell whether the username exists. The seed is a secret key. Generate at least 16 random bytes once, store them with the verifiers and use the same seed on every server instance and across restarts. A seed that differs between instances or restarts lets a client spot an unknown username by its salt changing, and anyone who knows the seed can compute the salt of any unknown username. Pass the group of the stored verifiers, because the server sends it in the clear and a different group would give the username away as well.
 * With `ErrUnknownUsername`, the server sends an `unknown_psk_identity` alert, which reveals that the username does not exist.
 
 To refuse a client before the costly SRP computation, for example one over a rate limit, return `ErrAccessDenied` or an error that wraps it. The client gets an `access_denied` alert.
