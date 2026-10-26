@@ -90,6 +90,7 @@ On the client, the handshake error wraps `ErrWrongPassword` when the server answ
 * SRP in TLS uses SHA-1 for the SRP values, as RFC 5054 requires, and CBC with HMAC-SHA1 for the records. The CBC code keeps the partial Lucky13 countermeasures of `crypto/tls`.
 * The big-number arithmetic of both sides uses [filippo.io/bigmod](https://pkg.go.dev/filippo.io/bigmod), the constant-time modular arithmetic of the Go standard library exported as a module.
 * After `GetVerifier` returns, a simulated verifier costs the server the same work as a real one. The time of the lookup itself is up to the caller.
+* The server computes its public value as soon as `GetVerifier` returns, before the client proves anything, so a ClientHello of about 100 bytes costs it one modular exponentiation. The cost grows with the square of the group size. On an Apple M1 Pro the first server flight takes about 0.7 ms with the 2048-bit group and about 12 ms with the 8192-bit group. The library sets no handshake deadline. Limit the connections a client can open and set a deadline on each accepted connection before its handshake, with `SetDeadline` or `HandshakeContext`, or let a reverse proxy enforce both.
 * To limit password guessing, count a failed sign-in when the handshake error wraps `ErrWrongPassword` and check the count in `GetVerifier`, returning `ErrAccessDenied` once it is used up.
 
 ## Tested clients
