@@ -5,3 +5,6 @@ bin/
 
 # Local development files
 /local
+
+# Documentation site build output
+site/

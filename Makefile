@@ -47,6 +47,29 @@ test-interop: openssl ## Run the client against OpenSSL 1.1.1 s_server. Builds O
 	@go test -list '^TestOpenSSLServer$$' . | grep -x TestOpenSSLServer >/dev/null || { echo "error: TestOpenSSLServer is missing"; exit 1; }
 	SRPTLS_TEST_OPENSSL="$(OPENSSL_PREFIX)/bin/openssl" go test -race -count=1 -v -run '^TestOpenSSLServer$$' .
 
+##@ Documentation
+
+# PYTHON selects the interpreter that provides the MkDocs toolchain.
+PYTHON ?= python3
+
+# docs/requirements.txt pins every package by version and SHA-256 hash, so pip refuses a file that
+# differs from the one recorded, including a transitive dependency replaced upstream.
+.PHONY: docs-deps
+docs-deps: ## Install the hash-pinned documentation site build dependencies.
+	$(PYTHON) -m pip install --require-hashes -r docs/requirements.txt
+
+.PHONY: docs-requirements
+docs-requirements: ## Compile docs/requirements.txt with hashes from docs/requirements.in. Needs pip-tools.
+	$(PYTHON) -m piptools compile --generate-hashes --strip-extras --output-file docs/requirements.txt docs/requirements.in
+
+.PHONY: docs-build
+docs-build: ## Build the documentation site into site/ and fail on any warning.
+	$(PYTHON) -m mkdocs build --strict
+
+.PHONY: docs-serve
+docs-serve: ## Serve the documentation site locally with live reload.
+	$(PYTHON) -m mkdocs serve
+
 ##@ Release
 
 # VERSION names the release tag, for example v0.1.0. Every artifact is named after it.

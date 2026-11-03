@@ -1,0 +1,78 @@
+site_name: go-tls-srp
+site_description: A Go library for TLS 1.2 with SRP password authentication (TLS-SRP, RFC 5054) with a client and a server
+site_url: https://misiektoja.github.io/go-tls-srp/
+repo_url: https://github.com/misiektoja/go-tls-srp
+repo_name: misiektoja/go-tls-srp
+copyright: Licensed under the BSD 3-Clause License
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+# The pip requirements files live next to the pages for Dependabot but are not pages.
+exclude_docs: |
+  requirements.in
+  requirements.txt
+
+# The documentation build runs with --strict so every one of these findings fails the build.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+markdown_extensions:
+  - admonition
+  # The pages include the Example functions of example_test.go, which the tests build and run, so
+  # the code on the site compiles.
+  - pymdownx.snippets:
+      base_path: [.]
+      check_paths: true
+      dedent_subsections: true
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Overview: index.md
+  - Getting started: getting-started.md
+  - Support matrix: support-matrix.md
+  - Architecture: architecture.md
+  - Guides:
+      - Running a server: guide/server.md
+      - Connecting as a client: guide/client.md
+      - Verifiers and groups: guide/verifiers.md
+      - Unknown usernames and refusals: guide/unknown-usernames.md
+      - Channel binding and Extended Master Secret: guide/channel-binding.md
+      - Cipher suites: guide/cipher-suites.md
+  - Reference:
+      - Configuration: reference/configuration.md
+      - Connection state: reference/connection-state.md
+      - Errors and alerts: reference/errors.md
+  - Interoperability:
+      - Tested implementations: interoperability/tested-implementations.md
+  - Security:
+      - Security model: security/security-model.md
+  - Development:
+      - Development: development/development.md
+      - Testing: development/testing.md
+      - Release process: development/release-process.md
+  - Known limitations: known-limitations.md
