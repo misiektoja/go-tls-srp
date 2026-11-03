@@ -8,113 +8,120 @@
 [![Supply chain](https://github.com/misiektoja/go-tls-srp/actions/workflows/supply-chain.yml/badge.svg?branch=main)](https://github.com/misiektoja/go-tls-srp/actions/workflows/supply-chain.yml)
 [![OpenSSF Scorecard](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.scorecard.dev%2Fprojects%2Fgithub.com%2Fmisiektoja%2Fgo-tls-srp&query=%24.score&label=openssf%20scorecard&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/misiektoja/go-tls-srp)
 
-Package `srptls` is a TLS 1.2 client and server that sign in with SRP, the Secure Remote Password key exchange of [RFC 5054](https://www.rfc-editor.org/rfc/rfc5054). The client proves that it knows a password. The server stores only a verifier derived from the password, needs no certificate and proves to the client that it holds the verifier.
+Package `srptls` is a TLS 1.2 client and server that sign in with SRP, the Secure Remote Password key
+exchange of [RFC 5054](https://www.rfc-editor.org/rfc/rfc5054). The client proves that it knows a
+password. The server stores only a verifier derived from the password, needs no certificate and
+proves to the client that it holds the verifier.
 
-Go's `crypto/tls` has no SRP. This module is a trimmed copy of `crypto/tls` from Go 1.27.2 that keeps only the SRP handshake. It works with peers that already use TLS-SRP, such as EST clients built on libest or OpenSSL and EST servers that accept TLS-SRP.
+Go's `crypto/tls` has no SRP. This module is a trimmed copy of `crypto/tls` from Go 1.27.2 that keeps
+only the SRP handshake. It is written for systems that already use TLS-SRP, such as EST enrollment
+with certificate-less mutual authentication.
 
-## What it supports
+## Contents
 
-* **TLS 1.2 only** on both sides. SRP has no TLS 1.3 cipher suites. Older versions are refused.
-* **Cipher suites** `TLS_SRP_SHA_WITH_AES_256_CBC_SHA` and `TLS_SRP_SHA_WITH_AES_128_CBC_SHA`, preferred in that order. `TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA` is used only when listed in `Config.CipherSuites`. The suites that also sign with a server certificate are not implemented.
-* **Only the seven groups of RFC 5054, Appendix A**, from 1024 to 8192 bits. The client accepts 2048 bits and more unless `Config.MinGroupBits` allows the smaller groups.
-* **Extended Master Secret** (RFC 7627). The client always offers it and the server uses it when offered. `ConnectionState.ExportKeyingMaterial` works only with it.
-* **Secure renegotiation indication** (RFC 5746). Renegotiation itself is refused.
-* **SNI and `tls-unique`.** The client sends `Config.ServerName` and both sides report it in `ConnectionState.ServerName`. `ConnectionState.TLSUnique` holds the channel binding.
+* [Install](#install)
+* [Scope](#scope)
+* [Getting started](#getting-started)
+* [Documentation](#documentation)
+* [Limitations](#limitations)
+* [Support](#support)
+* [Licence](#licence)
 
-Not included: TLS 1.3, session resumption and tickets, certificates, ALPN, encrypt-then-MAC, QUIC and ECH.
+## Install
 
-## Server usage
-
-`Config.GetVerifier` returns the stored verifier for the username in the ClientHello:
-
-```go
-config := &srptls.Config{
-	GetVerifier: func(info *srptls.ClientHelloInfo) (*srptls.Verifier, error) {
-		if v, ok := store[info.Username]; ok {
-			return v, nil
-		}
-		return srptls.SimulatedVerifier(seed, group, []byte(info.Username)), nil
-	},
-}
-l, err := srptls.Listen("tcp", ":8443", config)
+```bash
+go get github.com/misiektoja/go-tls-srp
 ```
 
-Create verifiers with `NewVerifier` and a salt from `NewSalt`. To use an OpenSSL verifier, such as an `srpvfile` entry, decode its salt and verifier to big-endian bytes without leading zeros and find the group with `GroupByBits` or `GroupByParameters`.
-
-For an unknown username, return one of these:
-
-* `SimulatedVerifier`. The handshake fails like a wrong password, so the client cannot tell whether the username exists. The seed is a secret key. Generate at least 16 random bytes once and store them with the verifiers, so every server instance uses the same seed across restarts. Pass the group of the stored verifiers. [Its documentation](https://pkg.go.dev/github.com/misiektoja/go-tls-srp#SimulatedVerifier) explains how another seed or group gives the username away.
-* `ErrUnknownUsername`. The server sends an `unknown_psk_identity` alert, which tells the client that the username does not exist.
-
-To refuse a client before the costly SRP computation, for example one over a rate limit, return `ErrAccessDenied` or an error that wraps it. The client gets an `access_denied` alert.
-
-### With net/http
-
-`Request.TLS` stays nil because `net/http` fills it only for `crypto/tls` connections. Save the connection with `http.Server.ConnContext` and read its `ConnectionState` in the handler. The handshake runs on the first read, so `ReadHeaderTimeout` also limits it. See `Example_httpServer` in [example_test.go](example_test.go).
-
-## Client usage
-
-`Client` wraps a connection. `Config.Username` is required:
+The module needs Go 1.27.3 or newer. The package is imported as `srptls`:
 
 ```go
-raw, err := net.DialTimeout("tcp", "est.example:8443", 10*time.Second)
-if err != nil {
-	return err
-}
+import srptls "github.com/misiektoja/go-tls-srp"
+```
+
+## Scope
+
+| Standard | Coverage | Enabled by |
+| --- | --- | --- |
+| RFC 5054 TLS-SRP | Client and server over TLS 1.2, the seven groups of Appendix A, `TLS_SRP_SHA_WITH_AES_256_CBC_SHA` and `TLS_SRP_SHA_WITH_AES_128_CBC_SHA` | Always |
+| RFC 5054 3DES suite | `TLS_SRP_SHA_WITH_3DES_EDE_CBC_SHA` | `Config.CipherSuites` |
+| RFC 5054 small groups | The 1024 and 1536 bit groups on the client | `Config.MinGroupBits` |
+| RFC 7627 Extended Master Secret | Always offered by the client, used by the server when offered | Always |
+| RFC 5746 renegotiation indication | Signaling only, renegotiation is refused | Always |
+| RFC 6066 server name indication | Sent by the client, reported on both sides | `Config.ServerName` |
+| RFC 5929 `tls-unique` | `ConnectionState.TLSUnique` on both sides | Always |
+| RFC 5705 keying material exporters | `ConnectionState.ExportKeyingMaterial` | Extended Master Secret |
+
+The client is tested against OpenSSL 1.1.1w `s_server` in CI, see
+[Tested implementations](https://misiektoja.github.io/go-tls-srp/interoperability/tested-implementations/).
+
+## Getting started
+
+The server returns the stored verifier for the username in the ClientHello. The client signs in with
+the username and the password:
+
+```go
+l, err := srptls.Listen("tcp", ":8443", &srptls.Config{
+	GetVerifier: func(info *srptls.ClientHelloInfo) (*srptls.Verifier, error) {
+		return lookupVerifier(info.Username)
+	},
+})
+
 conn := srptls.Client(raw, &srptls.Config{
 	Username:   "device-1",
 	Password:   password,
 	ServerName: "est.example",
 })
-if err := conn.HandshakeContext(ctx); err != nil {
-	raw.Close()
-	return err
-}
-tlsUnique := conn.ConnectionState().TLSUnique
+err = conn.HandshakeContext(ctx)
 ```
 
-The handshake runs in `Handshake`, `HandshakeContext` or the first `Read` or `Write`. It fails before anything is sent when `Username` is empty or longer than 255 bytes. The username and password are hashed as given, without SASLprep, as OpenSSL does.
+`NewVerifier` creates a verifier from a password and a salt from `NewSalt`. A failed handshake wraps
+`ErrWrongPassword` when the password is wrong.
+[Getting started](https://misiektoja.github.io/go-tls-srp/getting-started/) runs a complete server
+and client. `Example` in [example_test.go](example_test.go) is the same program.
 
-The client fails the handshake when the server's Finished message does not verify, which means the server does not hold the user's verifier. It also refuses groups outside RFC 5054 or below `MinGroupBits` and a server value `B` that is zero modulo N.
+## Documentation
 
-An EST client puts `TLSUnique` in the challenge password of its CSR (RFC 7030, Section 3.5). With `net/http`, run the handshake in `http.Transport.DialTLSContext` and read the state from the connection, because `Response.TLS` stays nil. See `Example_httpClient` in [example_test.go](example_test.go).
+Full documentation is at
+[misiektoja.github.io/go-tls-srp](https://misiektoja.github.io/go-tls-srp/).
 
-## Errors
+* [Getting started](https://misiektoja.github.io/go-tls-srp/getting-started/)
+* [Support matrix](https://misiektoja.github.io/go-tls-srp/support-matrix/)
+* [Architecture](https://misiektoja.github.io/go-tls-srp/architecture/)
+* [Running a server](https://misiektoja.github.io/go-tls-srp/guide/server/) and [Connecting as a client](https://misiektoja.github.io/go-tls-srp/guide/client/)
+* [Verifiers and groups](https://misiektoja.github.io/go-tls-srp/guide/verifiers/), including OpenSSL verifier files
+* [Unknown usernames and refusals](https://misiektoja.github.io/go-tls-srp/guide/unknown-usernames/)
+* [Channel binding and Extended Master Secret](https://misiektoja.github.io/go-tls-srp/guide/channel-binding/)
+* [Cipher suites](https://misiektoja.github.io/go-tls-srp/guide/cipher-suites/)
+* [Errors and alerts](https://misiektoja.github.io/go-tls-srp/reference/errors/)
+* [Security model](https://misiektoja.github.io/go-tls-srp/security/security-model/)
 
-| Cause | Server error | Alert to the client | Client error wraps |
-| --- | --- | --- | --- |
-| Wrong password or a `SimulatedVerifier` | wraps `ErrWrongPassword` | `bad_record_mac` | `ErrWrongPassword` |
-| `GetVerifier` returns `ErrUnknownUsername` | the error from `GetVerifier` | `unknown_psk_identity` | `ErrUnknownUsername` |
-| `GetVerifier` returns `ErrAccessDenied` | the error from `GetVerifier` | `access_denied` | `ErrAccessDenied` |
+The package documentation on [pkg.go.dev](https://pkg.go.dev/github.com/misiektoja/go-tls-srp)
+describes every exported identifier. Repository files:
 
-An alert from the peer is a `*net.OpError` with `Op` set to `"remote error"`. After a failed handshake, `Conn.Handshake` returns the same error again.
+* [CONTRIBUTING.md](CONTRIBUTING.md) lists the development checks and how the copy of `crypto/tls`
+  follows Go releases.
+* [SECURITY.md](SECURITY.md) explains how to report a vulnerability.
+* [RELEASE_NOTES.md](RELEASE_NOTES.md) records user-visible changes per release.
 
-## Security notes
+## Limitations
 
-* SRP in TLS uses SHA-1 for the SRP values, as RFC 5054 requires, and CBC with HMAC-SHA1 for the records. The CBC code keeps the partial Lucky13 countermeasures of `crypto/tls`.
-* The big-number arithmetic of both sides uses [filippo.io/bigmod](https://pkg.go.dev/filippo.io/bigmod), the constant-time modular arithmetic of the Go standard library exported as a module.
-* After `GetVerifier` returns, a simulated verifier costs the server the same work as a real one. The time of the lookup itself is up to the caller.
-* Once `GetVerifier` returns a verifier, the server does one modular exponentiation before the client proves anything. A ClientHello of about 100 bytes is enough to cause it. The cost grows with the square of the group size. The library sets no handshake deadline. Limit the connections a client can open and set a deadline on each accepted connection before its handshake with `SetDeadline` or `HandshakeContext`. A reverse proxy can enforce both.
-* To limit password guessing, count a failed sign-in when the handshake error wraps `ErrWrongPassword` and check the count in `GetVerifier`, returning `ErrAccessDenied` once it is used up.
+* TLS 1.2 only, with the SRP cipher suites that need no certificate. No TLS 1.3.
+* Only the seven groups of RFC 5054, Appendix A.
+* No session resumption and no renegotiation. Every connection runs a full handshake.
+* `*srptls.Conn` is not a `*tls.Conn`, so `net/http` leaves `Request.TLS` and `Response.TLS` nil and
+  cannot negotiate HTTP/2.
+* No handshake deadline, connection limit or limit on failed sign-ins. The server must set them, as
+  the [Security model](https://misiektoja.github.io/go-tls-srp/security/security-model/#denial-of-service)
+  describes.
 
-## Tested clients
+[Known limitations](https://misiektoja.github.io/go-tls-srp/known-limitations/) explains each gap.
 
-* OpenSSL 1.1.1k `s_client` and curl 7.61.1 on Rocky Linux 8.
-* libssl 3.5.9 and 4.0.3 through the SRP API (`SSL_CTX_set_srp_username` and `SSL_CTX_set_srp_password`).
+## Support
 
-`openssl s_client` from OpenSSL 3.0 onward ignores `-srppass` and uses a wrong password ([openssl/openssl#32565](https://github.com/openssl/openssl/issues/32565)). Test with OpenSSL 1.1.1, curl or a program that calls libssl directly.
-
-## Tested servers
-
-* OpenSSL 1.1.1w `s_server` with `-srpvfile` and verifiers made by `openssl srp`.
-
-`openssl s_server` from OpenSSL 3.0.22, 3.5.9, 3.6.5 and 4.0.3 closes the connection during its SRP user lookup, also with its own `s_client`.
-
-`make test-interop` builds OpenSSL 1.1.1w from source under `bin/` and runs the client against its `s_server`. To use another OpenSSL 1.1.1 binary, set `SRPTLS_TEST_OPENSSL` to it and run `go test -run TestOpenSSLServer`.
-
-## Contributing
-
-[CONTRIBUTING.md](CONTRIBUTING.md) describes the development checks, how the copy of `crypto/tls` follows Go releases and the release process.
+Ask questions and report bugs in [GitHub issues](https://github.com/misiektoja/go-tls-srp/issues).
+Include the module version, the Go version, the peer and its version and the handshake error of both
+sides. Report vulnerabilities privately as [SECURITY.md](SECURITY.md) describes.
 
 ## Licence
 
