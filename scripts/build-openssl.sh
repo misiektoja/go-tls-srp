@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the OpenSSL 1.1.1 command line tool that TestOpenSSLServer runs against. The s_server of
-# OpenSSL 3.0 and later cannot serve SRP, see "Tested servers" in the README.
+# OpenSSL 3.0 and later cannot serve SRP, see the TestOpenSSLServer comment in interop_openssl_test.go.
 #
 # Usage: scripts/build-openssl.sh <prefix>
 #
