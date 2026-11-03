@@ -11,12 +11,28 @@ make actionlint     # lint the GitHub Actions workflows
 make test-interop   # the client against OpenSSL 1.1.1w s_server
 make govulncheck    # known vulnerabilities that reach the code
 make gitleaks       # leaked credentials in the tree and the history
+make docs-build     # strict build of the documentation site
 make help           # every target
 ```
 
 The recipes use the Go version from `go.mod` and download it when needed. Pinned tools are installed under `bin/` on first use. Building OpenSSL needs a C compiler, make and perl.
 
 Pull requests to `main` and `dev` must pass the tests, lint, the OpenSSL interop test, govulncheck and gitleaks.
+
+## Documentation site
+
+The site at [misiektoja.github.io/go-tls-srp](https://misiektoja.github.io/go-tls-srp/) is built with MkDocs and the Material theme from `docs/` and `mkdocs.yml`. Pages include code from the examples in `example_test.go` through `--8<--` snippet markers, so `make test` compiles and runs the code the site shows. Keep the marker comments when you edit that file. Set `PYTHON` when the MkDocs toolchain lives in a virtual environment:
+
+```bash
+make docs-deps PYTHON=.venv/bin/python
+make docs-serve PYTHON=.venv/bin/python
+```
+
+`make docs-build` runs with `--strict`, so a broken link, a missing anchor or a page absent from the navigation fails the build. The [documentation workflow](.github/workflows/docs.yml) runs the same build on every change to the documentation and publishes the site from `main` to the `gh-pages` branch.
+
+The toolchain is pinned with hashes in `docs/requirements.txt`, which `make docs-deps` installs in hash-checking mode. The direct dependencies live in `docs/requirements.in`. To change a version, edit that file and run `make docs-requirements`, which needs pip-tools in the `PYTHON` environment.
+
+User-facing behavior changes update the Go doc comments and the pages under `docs/`.
 
 ## Following Go releases
 
