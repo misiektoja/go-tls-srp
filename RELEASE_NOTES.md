@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.2] - 22 Nov 2026
+
+This release requires **Go 1.27.4**.
+
+### Requirements
+
+* **Go 1.27.4** - `go.mod` requires the newest Go 1.27 patch release. Go 1.27.4 changed no `crypto/tls` code that this package uses.
+
 ## [0.2.1] - 26 Oct 2026
 
 This release requires **Go 1.27.3** and documents how to keep unknown usernames hidden and how to bound the server cost of a handshake.
