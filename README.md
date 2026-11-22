@@ -33,7 +33,7 @@ with certificate-less mutual authentication.
 go get github.com/misiektoja/go-tls-srp
 ```
 
-The module needs Go 1.27.3 or newer. The package is imported as `srptls`:
+The module needs Go 1.27.4 or newer. The package is imported as `srptls`:
 
 ```go
 import srptls "github.com/misiektoja/go-tls-srp"

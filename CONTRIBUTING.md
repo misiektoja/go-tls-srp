@@ -40,13 +40,13 @@ Commit `b52d68c` holds `crypto/tls` from Go 1.27.2 unchanged. The kept files are
 
 The Upstream Go workflow runs two checks on every push and weekly:
 
-* `make upstream-check` fails when a kept file of `UPSTREAM_GO_VERSION` (Go 1.27.2) changed in the installed Go release, which is the newest stable release in CI. Set `UPSTREAM_CANDIDATE=go1.28.0` to compare with a specific release. When it fails, port the changes that affect the TLS 1.2 client or server, the CBC record layer or the handshake message parsing. Then raise `UPSTREAM_GO_VERSION` to the release you ported.
+* `make upstream-check` fails when a kept file of `UPSTREAM_GO_VERSION` (Go 1.27.4) changed in the installed Go release, which is the newest stable release in CI. Set `UPSTREAM_CANDIDATE=go1.28.0` to compare with a specific release. When it fails, port the changes that affect the TLS 1.2 client or server, the CBC record layer or the handshake message parsing. Then raise `UPSTREAM_GO_VERSION` to the release you ported.
 * `make go-version-check` fails when a newer patch release of the Go minor in `go.mod` exists. Raise the `go` directive in `go.mod` to that release so the checks run against a current standard library.
 
 `make upstream-check` prints the diff. To see it for one file:
 
 ```bash
-git diff --no-index "$(go1.27.2 env GOROOT)/src/crypto/tls/conn.go" "$(go env GOROOT)/src/crypto/tls/conn.go"
+git diff --no-index "$(go1.27.4 env GOROOT)/src/crypto/tls/conn.go" "$(go env GOROOT)/src/crypto/tls/conn.go"
 ```
 
 ## Releases

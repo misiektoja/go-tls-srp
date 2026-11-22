@@ -13,7 +13,7 @@ code is `Example` in `example_test.go`, which `go test` runs and checks against 
 go get github.com/misiektoja/go-tls-srp
 ```
 
-The module needs Go 1.27.3 or newer.
+The module needs Go 1.27.4 or newer.
 
 ## Create a verifier
 

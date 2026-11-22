@@ -20,7 +20,7 @@ certificate-less mutual authentication.
 go get github.com/misiektoja/go-tls-srp
 ```
 
-The module needs Go 1.27.3 or newer. It depends on
+The module needs Go 1.27.4 or newer. It depends on
 [filippo.io/bigmod](https://pkg.go.dev/filippo.io/bigmod) for the SRP arithmetic and on
 `golang.org/x/crypto/cryptobyte` for message parsing. The package name differs from the module path,
 so import it with a name:

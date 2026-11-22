@@ -50,7 +50,7 @@ Most of the package is `crypto/tls` from Go 1.27.2. `alert.go`, `cipher_suites.g
 `conn.go`, `handshake_messages.go`, `handshake_server.go`, `prf.go` and `tls.go` are the kept files.
 The Upstream Go workflow runs two checks on every push and pull request to `dev` and `main` and weekly:
 
-* `make upstream-check` fails when a kept file changed between `UPSTREAM_GO_VERSION` (1.27.2) and the
+* `make upstream-check` fails when a kept file changed between `UPSTREAM_GO_VERSION` (1.27.4) and the
   installed Go release, which CI makes the newest stable release. Set `UPSTREAM_CANDIDATE=go1.28.0`
   to compare with a specific release. When it fails, port the changes that affect the TLS 1.2 client
   or server, the CBC record layer or the handshake message parsing, then raise
@@ -61,7 +61,7 @@ The Upstream Go workflow runs two checks on every push and pull request to `dev`
 `make upstream-check` prints the diff. To see it for one file:
 
 ```bash
-git diff --no-index "$(GOTOOLCHAIN=go1.27.2 go env GOROOT)/src/crypto/tls/conn.go" "$(go env GOROOT)/src/crypto/tls/conn.go"
+git diff --no-index "$(GOTOOLCHAIN=go1.27.4 go env GOROOT)/src/crypto/tls/conn.go" "$(go env GOROOT)/src/crypto/tls/conn.go"
 ```
 
 ## Documentation
