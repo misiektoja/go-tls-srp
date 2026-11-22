@@ -135,7 +135,7 @@ release-checksums: release-source-archives ## Write SHA-256 checksums for the so
 
 # UPSTREAM_GO_VERSION is the Go release the kept crypto/tls files were copied from. Raise it after
 # porting the changes of a newer release. UPSTREAM_FILES are those files, as CONTRIBUTING.md lists them.
-UPSTREAM_GO_VERSION ?= 1.27.2
+UPSTREAM_GO_VERSION ?= 1.27.4
 UPSTREAM_FILES := alert.go cipher_suites.go common.go conn.go handshake_messages.go handshake_server.go prf.go tls.go
 # UPSTREAM_CANDIDATE is the GOTOOLCHAIN value of the Go release to compare with: local for the
 # installed one, which CI makes the newest stable release. A version such as go1.28.0 selects
