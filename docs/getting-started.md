@@ -1,3 +1,7 @@
+---
+description: "Install go-tls-srp, create an SRP verifier, start a TLS-SRP server and sign in with a client in one Go program, plus what to change for production."
+---
+
 # Getting started
 
 This page creates a verifier, starts a server and signs in to it with a client in one program. The

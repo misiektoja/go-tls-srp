@@ -1,3 +1,7 @@
+---
+description: "The go-tls-srp sentinel errors such as ErrWrongPassword and ErrUnknownUsername, the TLS alerts sent on each side and other handshake errors."
+---
+
 # Errors and alerts
 
 ## Sentinel errors

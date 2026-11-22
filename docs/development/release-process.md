@@ -1,3 +1,7 @@
+---
+description: "How a go-tls-srp release is made: the release check, the signed version tag and what the check verifies before the tag is pushed."
+---
+
 # Release process
 
 [RELEASE_NOTES.md](https://github.com/misiektoja/go-tls-srp/blob/main/RELEASE_NOTES.md) has one

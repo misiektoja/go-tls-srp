@@ -1,3 +1,7 @@
+---
+description: "How go-tls-srp is tested: what each test file covers, the interoperability tests against OpenSSL and how to add a test."
+---
+
 # Testing
 
 `make test` runs `go vet` and the tests under the race detector. CI runs it on every push and pull

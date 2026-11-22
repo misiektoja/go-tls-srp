@@ -1,3 +1,7 @@
+---
+description: "What a TLS-SRP handshake with go-tls-srp proves, what the library checks and what the caller must do, including denial of service and verifier protection."
+---
+
 # Security model
 
 ## What the handshake proves

@@ -1,3 +1,7 @@
+---
+description: "Build, check and change go-tls-srp: prerequisites, repository layout, Make targets, following Go releases and building the documentation site."
+---
+
 # Development
 
 How to build, check and change the library. Contribution rules are in

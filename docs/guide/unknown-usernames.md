@@ -1,3 +1,7 @@
+---
+description: "Decide what a TLS-SRP client learns about an unknown username in go-tls-srp, use a simulated verifier, refuse clients and limit password guessing."
+---
+
 # Unknown usernames and refusals
 
 `GetVerifier` decides what a client with an unknown username learns and whether a client is refused

@@ -1,3 +1,7 @@
+---
+description: "Create, store and load SRP verifiers in go-tls-srp, choose one of the RFC 5054 groups and import verifier files made by openssl srp."
+---
+
 # Verifiers and groups
 
 ## What a verifier is

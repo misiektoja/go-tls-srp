@@ -1,3 +1,7 @@
+---
+description: "TLS versions, SRP cipher suites, RFC 5054 groups, extensions and features that the go-tls-srp client and server support or leave out."
+---
+
 # Support matrix
 
 What the client and the server implement. [Known limitations](known-limitations.md) explains the

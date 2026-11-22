@@ -1,3 +1,7 @@
+---
+description: "Read the tls-unique channel binding (RFC 5929) and Extended Master Secret with go-tls-srp. Export keying material, for example to bind an EST request."
+---
+
 # Channel binding and Extended Master Secret
 
 ## tls-unique

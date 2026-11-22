@@ -1,3 +1,7 @@
+---
+description: "How go-tls-srp is built from a trimmed copy of Go crypto/tls, which source file does what and how the TLS-SRP handshake runs."
+---
+
 # Architecture
 
 ## Where the code comes from

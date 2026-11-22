@@ -1,3 +1,8 @@
+---
+title: "TLS-SRP client and server for Go (RFC 5054)"
+description: "go-tls-srp is a Go library with a TLS-SRP client and server for TLS 1.2 and RFC 5054, with password authentication and no certificates."
+---
+
 # go-tls-srp
 
 go-tls-srp is a Go library for TLS-SRP: TLS 1.2 with the Secure Remote Password key exchange of
