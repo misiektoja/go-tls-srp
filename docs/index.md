@@ -1,3 +1,8 @@
+---
+title: "TLS-SRP client and server for Go (RFC 5054)"
+description: "go-tls-srp is a Go library with a TLS-SRP client and server for TLS 1.2 and RFC 5054, with password authentication and no certificates."
+---
+
 # go-tls-srp
 
 go-tls-srp is a Go library for TLS-SRP: TLS 1.2 with the Secure Remote Password key exchange of
@@ -15,7 +20,7 @@ certificate-less mutual authentication.
 go get github.com/misiektoja/go-tls-srp
 ```
 
-The module needs Go 1.27.3 or newer. It depends on
+The module needs Go 1.27.4 or newer. It depends on
 [filippo.io/bigmod](https://pkg.go.dev/filippo.io/bigmod) for the SRP arithmetic and on
 `golang.org/x/crypto/cryptobyte` for message parsing. The package name differs from the module path,
 so import it with a name:

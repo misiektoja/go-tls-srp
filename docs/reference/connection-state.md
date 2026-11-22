@@ -1,3 +1,7 @@
+---
+description: "Reference for the go-tls-srp ConnectionState fields, the Conn methods and the constants, such as the negotiated cipher suite and SRP username."
+---
+
 # Connection state
 
 ## ConnectionState

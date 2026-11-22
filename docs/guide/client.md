@@ -1,3 +1,7 @@
+---
+description: "Connect to a TLS-SRP server from Go with go-tls-srp using a username and password, with the checks the client makes and how to use it with net/http."
+---
+
 # Connecting as a client
 
 The client signs in with a username and a password. It needs no CA certificates: a server that

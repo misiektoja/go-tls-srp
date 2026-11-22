@@ -1,3 +1,7 @@
+---
+description: "Reference for the go-tls-srp Config type, its client and server fields with defaults and rules, plus ClientHelloInfo and the constructors."
+---
+
 # Configuration
 
 ## Config

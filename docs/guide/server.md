@@ -1,3 +1,7 @@
+---
+description: "Run a TLS-SRP server in Go with go-tls-srp, the GetVerifier callback, handshake deadlines and cost, net/http use and debugging."
+---
+
 # Running a server
 
 A TLS-SRP server needs one thing from you: `Config.GetVerifier`, which returns the stored verifier

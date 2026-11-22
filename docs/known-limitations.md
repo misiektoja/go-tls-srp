@@ -1,3 +1,7 @@
+---
+description: "What go-tls-srp does not support, such as TLS 1.3, session resumption, renegotiation, SASLprep and groups beyond the seven of RFC 5054."
+---
+
 # Known limitations
 
 ## TLS 1.2 only

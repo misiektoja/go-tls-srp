@@ -1,3 +1,7 @@
+---
+description: "Install go-tls-srp, create an SRP verifier, start a TLS-SRP server and sign in with a client in one Go program, plus what to change for production."
+---
+
 # Getting started
 
 This page creates a verifier, starts a server and signs in to it with a client in one program. The
@@ -9,7 +13,7 @@ code is `Example` in `example_test.go`, which `go test` runs and checks against 
 go get github.com/misiektoja/go-tls-srp
 ```
 
-The module needs Go 1.27.3 or newer.
+The module needs Go 1.27.4 or newer.
 
 ## Create a verifier
 

@@ -1,3 +1,7 @@
+---
+description: "The three SRP cipher suites of RFC 5054 that go-tls-srp implements, their OpenSSL names, the default order and how to enable 3DES for old peers."
+---
+
 # Cipher suites
 
 The package implements the three SRP cipher suites of
